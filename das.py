@@ -386,7 +386,7 @@ if __name__ == "__main__":
     vocab, texts, labels = util_data.get_vocab_and_data()
 
     # construct causal model
-    or_causal_model = util_data.build_causal_model(vocab)
+    or_causal_model = util_data.build_causal_model2(vocab)
 
     # load trained model
     model, tokenizer = util_model.load_model()
@@ -413,39 +413,56 @@ if __name__ == "__main__":
 
     candidates = {}
 
-    #load candidates
-    with open("candidates.json", "r") as f:
-        candidates = json.load(f)
+    # #load candidates
+    # with open("candidates.json", "r") as f:
+    #     candidates = json.load(f)
 
-    # load weights
-    weights = load_weight("das_weights/das_weights.pt")
+    # # load weights
+    # weights = load_weight("das_weights/das_weights.pt")
 
     
-    layers = [5, 6]
-    poss = [78, 80]
-    w = [weights["op1"]["L5_P78"], weights["op2"]["L5_P80"]]
+    # layers = [5, 6]
+    # poss = [78, 80]
+    # w = [weights["op1"]["L5_P78"], weights["op2"]["L5_P80"]]
     interventions = ["op1", "op2"]
-    intervenable = config_das_parallel(model, layers, device, w)
+    # intervenable = config_das_parallel(model, layers, device, w)
     
     # create dataset
+    for intervention in ["op4", "op5", "op6"]:
+        dataset = util_data.make_counterfactual_dataset(
+            "all2",
+            interventions,
+            vocab,
+            texts,
+            labels,
+            or_causal_model,
+            model,
+            tokenizer,
+            data_size,
+            device, 
+            batch_size=batch_size
+        )
+        candidate, weight = find_candidate_alignments(
+            model,
+            dataset,
+            poss,
+            layers,
+            batch_size,
+            device,
+            n_candidates=5
+        )
+        candidates[intervention] = candidate
+        weights[intervention] = weight
+        
+    # save the candidates
+    with open(f"candidates2.json", "w") as f:
+        json.dump(candidates, f, indent=4)
 
-    dataset = util_data.make_counterfactual_dataset(
-        "all",
-        interventions,
-        vocab,
-        texts,
-        labels,
-        or_causal_model,
-        model,
-        tokenizer,
-        data_size,
-        device, 
-        batch_size=batch_size
-    )
 
-    acc = parallel_intervention(intervenable, poss, dataset, batch_size)
 
-    print(f"Accuracy: {acc:.4f}")
+    #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
+
+    #print(f"Accuracy: {acc:.4f}")
 
     # Release the GPU memory
     model.cpu()

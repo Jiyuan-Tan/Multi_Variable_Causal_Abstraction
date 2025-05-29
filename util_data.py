@@ -1,4 +1,3 @@
-"""This file creates data for fine-tining and testing the model for a specific logic task."""
 import random
 import pandas as pd
 import pyvene as pv
@@ -6,9 +5,7 @@ import numpy as np
 from pyvene import CausalModel
 
 def get_vocab_and_data():
-    '''Load the vocabulary and data from the specified files. 
-    The vocabulary is loaded from vocab.csv (containing 11162 words) and the training data is loaded from sample_data_zen_20000_0312.tsv. 
-    The function returns the vocabulary, texts, and labels. '''
+    '''Load the vocabulary and data from the specified files. The vocabulary is loaded from vocab.csv and the training data is loaded from sample_data_zen_20000_0312.tsv. The function returns the vocabulary, texts, and labels. '''
     vocab = pd.read_csv("vocab.csv", header=None)
     vocab = vocab.iloc[:, 1].tolist()
     df = pd.read_csv("./data/sample_data_zen_20000_0312.tsv", sep="\t")
@@ -17,29 +14,28 @@ def get_vocab_and_data():
     return vocab, texts, labels
 
 def build_causal_model(vocab, model_type = 'or_model'):
-
-    '''
-    Build a causal model based on the specified model type. The function returns a CausalModel object. 
-    The defined causal model below is
-                    op5(or)
-                  /         \
-            op4(and)         \
-              /   \           \
-         op1(!=) op2(!=)     op3(==)
-            |       |          |
-         t2, t4   t0, t5      t1, t3
-    '''
-
+    '''Build a causal model based on the specified model type. The function returns a CausalModel object. '''
     if model_type == 'or_model':
         variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1", "op2", "op3", "op4", "op5"]
         reps = vocab
         values = {variable: reps for variable in ["t0", "t1", "t2", "t3", "t4", "t5"]}
-        for i in range(1, 8):
-            values[f"op{i}"] = [True, False] 
+        values["op1"] = [True, False]
+        values["op2"] = [True, False]
+        values["op3"] = [True, False]
+        values["op4"] = [True, False]
+        values["op5"] = [True, False]
+        values["op6"] = [True, False]
+        values["op7"] = [True, False]
 
         parents = {
-            "t0": [], "t1": [], "t2": [], "t3": [], 
-            "t4": [], "t5": [], "t6": [], "t7": [],
+            "t0": [],
+            "t1": [],
+            "t2": [],
+            "t3": [],
+            "t4": [],
+            "t5": [],
+            "t6": [],
+            "t7": [],
             "op1": ["t2", "t4"],
             "op2": ["t0", "t5"],
             "op3": ["t1", "t3"],
@@ -47,12 +43,18 @@ def build_causal_model(vocab, model_type = 'or_model'):
             "op5": ["op3", "op4"],
         }
 
+
         def FILLER():
             return reps[0]
 
 
         functions = {
-            "t0": FILLER, "t1": FILLER, "t2": FILLER, "t3": FILLER, "t4": FILLER, "t5": FILLER,
+            "t0": FILLER,
+            "t1": FILLER,
+            "t2": FILLER,
+            "t3": FILLER,
+            "t4": FILLER,
+            "t5": FILLER,
             "op1": lambda x, y:  x != y,
             "op2": lambda x, y:  x != y,
             "op3": lambda x, y: x == y,
@@ -61,15 +63,88 @@ def build_causal_model(vocab, model_type = 'or_model'):
             #"op7": lambda x, y: x and y,
         }
 
-        # Define positions for visualization
         pos = {
-            "t0": (.1,0), "t1": (.3,0), "t2": (.5,0), "t3": (.7,0), "t4": (.9,0), "t5": (1.1,0),
-            "op1": (.4,1), "op2": (.6,1), "op3": (.8,1), "op4": (.6,2), "op5": (.6,3),
+            "t0": (.1,0),
+            "t1": (.3,0),
+            "t2": (.5,0),
+            "t3": (.7,0),
+            "t4": (.9,0),
+            "t5": (1.1,0),
+            "op1": (.4,1),
+            "op2": (.6,1),
+            "op3": (.8,1),
+            "op4": (.6,2),
+            "op5": (.6,3),
+        }
+        causal_model = CausalModel(variables, values, parents, functions, pos=pos)
+    else:
+        # We only support the or_model for now
+        raise ValueError("Model type not supported. We only support 'or_model' for now.")
+    return causal_model
+
+def build_causal_model2(vocab, model_type = 'or_model'):
+    '''Build a causal model based on the specified model type. The function returns a CausalModel object. '''
+    if model_type == 'or_model':
+        variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1", "op2", "op3", "op4", "op5", "op6"]
+        reps = vocab
+        values = {variable: reps for variable in ["t0", "t1", "t2", "t3", "t4", "t5"]}
+        values["op1"] = [True, False]
+        values["op2"] = [True, False]
+        values["op3"] = [True, False]
+        values["op4"] = [True, False]
+        values["op5"] = [True, False]
+        values["op6"] = [True, False]
+
+        parents = {
+            "t0": [],
+            "t1": [],
+            "t2": [],
+            "t3": [],
+            "t4": [],
+            "t5": [],
+            "op1": ["t2", "t4"],
+            "op2": ["t0", "t5"],
+            "op3": ["t1", "t3"],
+            "op4": ["op1", "op3"],
+            "op5": ["op3", "op2"],
+            "op6": ["op4", "op5"],
         }
 
-        # Create the causal model
-        causal_model = CausalModel(variables, values, parents, functions, pos=pos)
 
+        def FILLER():
+            return reps[0]
+
+
+        functions = {
+            "t0": FILLER,
+            "t1": FILLER,
+            "t2": FILLER,
+            "t3": FILLER,
+            "t4": FILLER,
+            "t5": FILLER,
+            "op1": lambda x, y:  x != y,
+            "op2": lambda x, y:  x != y,
+            "op3": lambda x, y: x == y,
+            "op4": lambda x, y: x or y,
+            "op5": lambda x, y: x or y,
+            "op6": lambda x, y: x and y,
+        }
+
+        pos = {
+            "t0": (.1,0),
+            "t1": (.3,0),
+            "t2": (.5,0),
+            "t3": (.7,0),
+            "t4": (.9,0),
+            "t5": (1.1,0),
+            "op1": (.4,1),
+            "op2": (.6,1),
+            "op3": (.8,1),
+            "op4": (.6,2),
+            "op5": (.6,3),
+            "op6": (.6,4),
+        }
+        causal_model = CausalModel(variables, values, parents, functions, pos=pos)
     else:
         # We only support the or_model for now
         raise ValueError("Model type not supported. We only support 'or_model' for now.")
@@ -77,14 +152,6 @@ def build_causal_model(vocab, model_type = 'or_model'):
 
 # Process input 
 def format_input(raw_input, context_texts, context_labels):
-    '''
-    This function formats the input for the model. 
-    It returns a formatted string that in-context learning friendly: 
-        context1=label1
-        ...
-        contextn=labeln
-        word0,word1,word2,word3,word4,word5=
-    '''
     input = ",".join([
         str(raw_input[var]) for var in ["t0", "t1", "t2", "t3", "t4", "t5"] 
     ])
@@ -411,6 +478,66 @@ def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, sam
         dataset.append(dp)
     return dataset
 
+def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, samplesize:int):
+    dataset = []
+    for _ in range(samplesize):
+        # Base input:
+        # OP1: FTF
+        # OP2: TFF
+        # OP3: FFT
+        # OP4: TTF
+        # OP5: TTF
+        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        if random.random() < 0.5:
+            t2 = t4
+        if random.random() < 0.5:
+            t0 = t5
+        if random.random() < 0.5:
+            t1 = t3
+
+        p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
+    
+        base_id = {
+            "t0": t0,
+            "t1": t1,
+            "t2": t2,
+            "t3": t3,
+            "t4": t4,
+            "t5": t5,
+        }
+        dp = {"input_ids": base_id}
+        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p or r, "op5": q or r, "op6": (p and q) or r}
+        
+        
+        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+
+        t5s = t5 if random.random() < 0.5 else random.choice(vocab)
+        t4s = t4 if random.random() < 0.5 else random.choice(vocab)
+        t3s = t3 if random.random() < 0.5 else random.choice(vocab)
+
+        t5s = t0s if random.random() < 0.5 else random.choice(vocab)
+        t2s = t4s if random.random() < 0.5 else random.choice(vocab)
+        t1s = t3s if random.random() < 0.5 else random.choice(vocab)
+
+        source_id = {
+            "t0": t0s,
+            "t1": t1s,
+            "t2": t2s,
+            "t3": t3s,
+            "t4": t4s,
+            "t5": t5s,
+        }
+
+        ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
+        dp["source_input_ids"] = [source_id]
+        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs,"op6": (ps and qs) or rs}]
+        for intervention in interventions:
+            base_id[intervention] =  dp["source_labels"][0][intervention]
+        dp["labels"] = causal_model.run_forward(base_id)
+        # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
+        dataset.append(dp)
+    return dataset
+
 def make_counterfactual_dataset(
     dataset_type, 
     interv,
@@ -433,6 +560,8 @@ def make_counterfactual_dataset(
         make_raw_data = make_counterfactual_dataset_ft
     elif dataset_type == "all":
         make_raw_data = make_counterfactual_dataset_all
+    elif dataset_type == "all2":
+        make_raw_data = make_counterfactual_dataset_all2
     else:
         raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t']")
 
