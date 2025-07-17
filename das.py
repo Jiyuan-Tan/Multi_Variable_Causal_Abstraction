@@ -17,6 +17,7 @@ import json
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Only GPU 1 will be visible. MAKE SURE TO CHANGE THIS TO YOUR PREFERRED GPU
 
 def compute_metrics(eval_preds, eval_labels):
+    ''' This function is used to compute the accuracy of the predictions. '''
     total_count = 0
     correct_count = 0
     for eval_pred, eval_label in zip(eval_preds, eval_labels):
@@ -26,6 +27,7 @@ def compute_metrics(eval_preds, eval_labels):
     return {"accuracy": accuracy}
 
 def compute_loss(outputs, labels):
+    ''' This function is used to compute the loss of the predictions. We will use cross entropy loss. '''
     CE = torch.nn.CrossEntropyLoss()
     return CE(outputs, labels)
 
@@ -37,6 +39,20 @@ def batched_random_sampler(data, batch_size):
             yield i
 
 def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
+    '''Main code for training the model with DAS intervention.
+    Input:
+        intervenable: the model with the intervention, pyvene.IntervenableModel
+        train_dataset: the training dataset, contain input_ids, source_input_ids, labels
+        optimizer: the optimizer to be used, torch.optim.Adam
+        pos: the position of the intervention, int
+        epochs: the number of epochs to train, int
+        batch_size: the batch size to be used, int
+        gradient_accumulation_steps: the number of steps to accumulate gradients, int
+    Output:
+        None, the model will be trained in-place.
+    This function will train the model with the intervention, and compute the loss and accuracy.
+    '''
+    
     intervenable.model.train()  # train enables drop-off but no grads
     print("intervention trainable parameters: ", intervenable.count_parameters())
     train_iterator = trange(0, int(epochs), desc="Epoch")
@@ -55,6 +71,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
         )
 
         for batch in epoch_iterator:
+            # Jiyuan: Need to verify the shape of input_ids and source_input_ids. The code should be correct, but I don't remember the exact shape.
             batch["input_ids"] = batch["input_ids"].squeeze(1).squeeze(1)
             batch["source_input_ids"] = batch["source_input_ids"].squeeze(1).squeeze(1)
             #print(batch["input_ids"].shape, batch["source_input_ids"].shape)
@@ -63,6 +80,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
                 if v is not None and isinstance(v, torch.Tensor):
                     batch[k] = v.to("cuda")
 
+            # Interchange intervention: Please pay attention to the shape. It can be tricky.
             _, counterfactual_outputs = intervenable(
                 {"input_ids": batch["input_ids"]},
                 [
@@ -77,7 +95,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
                     [[0]] * batch_size,
                 ],
             )
-
+            # compute metrics
             eval_metrics = compute_metrics(
             counterfactual_outputs.logits[:,-1,:].argmax(dim=-1), batch["labels"].squeeze()
             )
@@ -107,7 +125,16 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
 
         epoch_iterator.close()  # Close inner progress bar after each epoch
 
-def das_test(intervenable, pos, test_dataset, batch_size):
+def das_test(intervenable, pos, test_dataset, batch_size = 64):
+    ''' This function is used to test the model with the intervention.
+    Input:
+        intervenable: the model with the intervention, pyvene.IntervenableModel
+        pos: the position of the intervention, int
+        test_dataset: the testing dataset, contain input_ids, source_input_ids, labels
+        batch_size: the batch size to be used, int
+    Output:
+        acc: the accuracy of the model, float
+    This function will test the model with the intervention, and compute the accuracy.'''
     eval_labels = []
     eval_preds = []
     with torch.no_grad():
@@ -153,7 +180,14 @@ def das_test(intervenable, pos, test_dataset, batch_size):
     return acc
 
 def config_das(model, layer, device):
-    # Set up the model
+    '''The function is used to set up the configuration for DAS intervention and wrap the model as an IntervenableModel.
+    Input: 
+        model: the model to be used
+        layer: the layer to be used for intervention
+        device: the device to be used
+    Output:
+        intervenable: the model with the intervention
+    This function will create an IntervenableModel with the given configuration.'''
     config = IntervenableConfig(
             model_type = type(model),
             representations=[
@@ -171,7 +205,6 @@ def config_das(model, layer, device):
     intervenable = IntervenableModel(config, model)
     intervenable.set_device(device)
     intervenable.disable_model_gradients()
-
     return intervenable
 
 def config_das_parallel(model, layers, device, weights=None):
@@ -361,6 +394,7 @@ def select_candidates(node, candidates, causal_model,dataset_generator, weights)
         dataset_generator: the dataset generator input: intervention
     Output:
         selected_candidates: the selected candidates for the intervention
+    More work needs to be done here.
     '''
     children = causal_model.paraents[node]
     if len(children) == 0:
@@ -379,7 +413,6 @@ def select_candidates(node, candidates, causal_model,dataset_generator, weights)
         layer, pos = extract_layer_pos(candidate)
 
         # TBD 
-
 
 if __name__ == "__main__":
     # load data
@@ -435,6 +468,7 @@ if __name__ == "__main__":
             vocab,
             texts,
             labels,
+            "op6",
             or_causal_model,
             model,
             tokenizer,

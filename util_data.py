@@ -152,6 +152,7 @@ def build_causal_model2(vocab, model_type = 'or_model'):
 
 # Process input 
 def format_input(raw_input, context_texts, context_labels):
+    ## Format the input for the model in the form of "context1=label1\ncontext2=label2\n...input=t0,t1,t2,t3,t4,t5="
     input = ",".join([
         str(raw_input[var]) for var in ["t0", "t1", "t2", "t3", "t4", "t5"] 
     ])
@@ -164,6 +165,8 @@ def format_input(raw_input, context_texts, context_labels):
 
 # filter dataset
 def data_filter(causal_model, model, tokenizer, dataset, device, batch_size = 16):
+    '''This function filters the dataset based on the model's predictions. It checks if the model's predictions for both base and source inputs match the labels in the dataset. If they do, the data point is kept; otherwise, it is discarded. The function returns a new filtered dataset.'''
+
     new_dataset = []
 
     for i in range(0, len(dataset), batch_size):
@@ -544,6 +547,7 @@ def make_counterfactual_dataset(
     vocab,
     texts,
     labels,
+    output_op,
     equality_model,
     model,
     tokenizer,
@@ -590,8 +594,8 @@ def make_counterfactual_dataset(
             {
                 "input_ids": tokenizer(base_texts, return_tensors="pt")["input_ids"].to(device),
                 "source_input_ids": tokenizer(source_texts, return_tensors="pt")["input_ids"].to(device),
-                "labels": tokenizer(str(dp["labels"]['op5']), return_tensors="pt")["input_ids"].to(device),
-                "source_labels": tokenizer(str(dp["source_labels"][0]['op5']), return_tensors="pt")["input_ids"].to(device),
+                "labels": tokenizer(str(dp["labels"][output_op]), return_tensors="pt")["input_ids"].to(device),
+                "source_labels": tokenizer(str(dp["source_labels"][0][output_op]), return_tensors="pt")["input_ids"].to(device),
             }
         )
     return data_tokenized
