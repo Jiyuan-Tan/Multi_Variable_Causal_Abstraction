@@ -1,10 +1,10 @@
 # research log/每周待办清单
 ## Summer Week 5 07/21/2025
-1. double check `opout` in `make_counterfactual_dataset` and `filter`. 
-2. 注释一下`make_counterfactual_dataset_all`
-3. 把alternative hypothesis重新跑一遍，在colab上跑出来
-4. 改代码把跑出来的结果存下来成文件（热量图和完整的文件）
-5. 再讨论新的实验（思考设计）【周四晚上】
+1. double check `opout` in `make_counterfactual_dataset` and `filter`. (LPY)
+2. 注释一下`make_counterfactual_dataset_all` (LPY)
+3. 把alternative hypothesis重新跑一遍，在colab上跑出来 (TJY)
+4. 改代码把跑出来的结果存下来成文件（热量图和完整的文件）(TJY)
+5. 再讨论新的实验（思考设计）【周四晚上】(LPY)
 
 ## Summer Week 4 07/13/2025
 1. 先看一下以前的代码,做一下标注、注释 看完留个爪子
