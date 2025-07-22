@@ -551,6 +551,7 @@ def make_counterfactual_dataset(
     vocab,
     texts,
     labels,
+    op_out,
     equality_model,
     model,
     tokenizer,
@@ -597,8 +598,8 @@ def make_counterfactual_dataset(
             {
                 "input_ids": tokenizer(base_texts, return_tensors="pt")["input_ids"].to(device),
                 "source_input_ids": tokenizer(source_texts, return_tensors="pt")["input_ids"].to(device),
-                "labels": tokenizer(str(dp["labels"]['op5']), return_tensors="pt")["input_ids"].to(device),
-                "source_labels": tokenizer(str(dp["source_labels"][0]['op5']), return_tensors="pt")["input_ids"].to(device),
+                "labels": tokenizer(str(dp["labels"][op_out]), return_tensors="pt")["input_ids"].to(device),
+                "source_labels": tokenizer(str(dp["source_labels"][0][op_out]), return_tensors="pt")["input_ids"].to(device),
             }
         )
     return data_tokenized
