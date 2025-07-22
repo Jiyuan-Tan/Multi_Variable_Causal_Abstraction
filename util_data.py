@@ -170,7 +170,7 @@ def format_input(raw_input, context_texts, context_labels):
 
 
 # filter dataset
-def data_filter(causal_model, model, tokenizer, dataset, device, batch_size = 16):
+def data_filter(op_out, causal_model, model, tokenizer, dataset, device, batch_size = 16):
     new_dataset = []
 
     for i in range(0, len(dataset), batch_size):
@@ -215,8 +215,8 @@ def data_filter(causal_model, model, tokenizer, dataset, device, batch_size = 16
 
         # Compare outputs with labels
         for dp, b_out, s_out in zip(batch, base_decoded, source_decoded):
-            base_label = str(dp["base_labels"]["op5"])
-            source_label = str(causal_model.run_forward(dp["source_input_ids"][0])["op5"])
+            base_label = str(dp["base_labels"][op_out])
+            source_label = str(causal_model.run_forward(dp["source_input_ids"][0])[op_out])
             if b_out == base_label and s_out == source_label:
                 # Keep only valid data points
                 new_dataset.append(dp)
@@ -584,7 +584,7 @@ def make_counterfactual_dataset(
         dp["context_texts_source"] = [texts[j] for j in indices]
         dp["context_labels_source"] = [labels[j] for j in indices]
 
-    dataset = data_filter(equality_model, model, tokenizer, dataset, device, batch_size=batch_size)
+    dataset = data_filter(op_out, equality_model, model, tokenizer, dataset, device, batch_size=batch_size)
     print(f"The sample size of dataset is {len(dataset)}, batch size {batch_size}")
 
     # Attach the context for each entry in the dataset and tokenize
