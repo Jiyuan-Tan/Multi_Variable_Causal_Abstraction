@@ -5,7 +5,10 @@ import numpy as np
 from pyvene import CausalModel
 
 def get_vocab_and_data():
-    '''Load the vocabulary and data from the specified files. The vocabulary is loaded from vocab.csv and the training data is loaded from sample_data_zen_20000_0312.tsv. The function returns the vocabulary, texts, and labels. '''
+    '''Load the vocabulary and data from the specified files. 
+    The vocabulary is loaded from vocab.csv and 
+    the training data is loaded from sample_data_zen_20000_0312.tsv. 
+    The function returns the vocabulary, texts, and labels. '''
     vocab = pd.read_csv("vocab.csv", header=None)
     vocab = vocab.iloc[:, 1].tolist()
     df = pd.read_csv("./data/sample_data_zen_20000_0312.tsv", sep="\t")
@@ -14,7 +17,9 @@ def get_vocab_and_data():
     return vocab, texts, labels
 
 def build_causal_model(vocab, model_type = 'or_model'):
-    '''Build a causal model based on the specified model type. The function returns a CausalModel object. '''
+    '''Build a causal model based on the specified model type. 
+    The function returns a CausalModel object. 
+    task: (op1 and op2) or op3'''
     if model_type == 'or_model':
         variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1", "op2", "op3", "op4", "op5"]
         reps = vocab
@@ -83,7 +88,9 @@ def build_causal_model(vocab, model_type = 'or_model'):
     return causal_model
 
 def build_causal_model2(vocab, model_type = 'or_model'):
-    '''Build a causal model based on the specified model type. The function returns a CausalModel object. '''
+    '''Build a causal model based on the specified model type. 
+    The function returns a CausalModel object. 
+    task: (op1 or op3) and (op2 or op3)'''
     if model_type == 'or_model':
         variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1", "op2", "op3", "op4", "op5", "op6"]
         reps = vocab
@@ -152,7 +159,6 @@ def build_causal_model2(vocab, model_type = 'or_model'):
 
 # Process input 
 def format_input(raw_input, context_texts, context_labels):
-    ## Format the input for the model in the form of "context1=label1\ncontext2=label2\n...input=t0,t1,t2,t3,t4,t5="
     input = ",".join([
         str(raw_input[var]) for var in ["t0", "t1", "t2", "t3", "t4", "t5"] 
     ])
@@ -165,8 +171,6 @@ def format_input(raw_input, context_texts, context_labels):
 
 # filter dataset
 def data_filter(causal_model, model, tokenizer, dataset, device, batch_size = 16):
-    '''This function filters the dataset based on the model's predictions. It checks if the model's predictions for both base and source inputs match the labels in the dataset. If they do, the data point is kept; otherwise, it is discarded. The function returns a new filtered dataset.'''
-
     new_dataset = []
 
     for i in range(0, len(dataset), batch_size):
@@ -547,7 +551,6 @@ def make_counterfactual_dataset(
     vocab,
     texts,
     labels,
-    output_op,
     equality_model,
     model,
     tokenizer,
@@ -594,8 +597,8 @@ def make_counterfactual_dataset(
             {
                 "input_ids": tokenizer(base_texts, return_tensors="pt")["input_ids"].to(device),
                 "source_input_ids": tokenizer(source_texts, return_tensors="pt")["input_ids"].to(device),
-                "labels": tokenizer(str(dp["labels"][output_op]), return_tensors="pt")["input_ids"].to(device),
-                "source_labels": tokenizer(str(dp["source_labels"][0][output_op]), return_tensors="pt")["input_ids"].to(device),
+                "labels": tokenizer(str(dp["labels"]['op5']), return_tensors="pt")["input_ids"].to(device),
+                "source_labels": tokenizer(str(dp["source_labels"][0]['op5']), return_tensors="pt")["input_ids"].to(device),
             }
         )
     return data_tokenized

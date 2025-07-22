@@ -53,12 +53,13 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
     This function will train the model with the intervention, and compute the loss and accuracy.
     '''
     
-    intervenable.model.train()  # train enables drop-off but no grads
-    print("intervention trainable parameters: ", intervenable.count_parameters())
-    train_iterator = trange(0, int(epochs), desc="Epoch")
+    intervenable.model.train()  # set the module to train mode, which enables drop-off but no grads
+    print("intervention trainable parameters: ", intervenable.count_parameters()) # count the number of trainable parameters in the intervention
+
+    train_iterator = trange(0, int(epochs), desc="Epoch")  # create a progress bar for the epochs
     total_step = 0
     for epoch in train_iterator:
-        epoch_iterator = tqdm(
+        epoch_iterator = tqdm( # create a progress bar for the batches
             DataLoader(
                 train_dataset,
                 batch_size=batch_size,

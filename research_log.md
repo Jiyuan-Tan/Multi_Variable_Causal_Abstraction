@@ -4,7 +4,7 @@
    - TJY [此处写完成日期]
    - LPY [此处写完成日期]
 2. 看一下连colab怎么弄，需不需要买pro(再说)
-    - 各自研究
+    - 各自研究 [可以colab直接脸上Git repo]
 3. 浏览一下吴政璇的新文章
    - 可以在overleaf里面写点笔记
 4. DAS新的example要整理一下写出来到overleaf上，具体怎么样intervene的【JY】
