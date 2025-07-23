@@ -38,7 +38,7 @@ def batched_random_sampler(data, batch_size):
         for i in range(b_i * batch_size, (b_i + 1) * batch_size):
             yield i
 
-def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
+def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 5, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
@@ -427,12 +427,13 @@ if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     model = model.to(device)
-    print(f"Current GPU: {torch.cuda.current_device()}")
+    if torch.cuda.is_available():
+        print(f"Current GPU: {torch.cuda.current_device()}")
 
     # create dataset
     data_size = 1024
     interv = "op4"
-    batch_size = 64
+    batch_size = 32
 
     # # Split the dataset into training and testing sets
     # training_size = int(len(dataset) * 0.6)
@@ -458,14 +459,15 @@ if __name__ == "__main__":
     # layers = [5, 6]
     # poss = [78, 80]
     # w = [weights["op1"]["L5_P78"], weights["op2"]["L5_P80"]]
-    interventions = ["op1", "op2"]
+    # interventions = ["op1", "op2"]
     # intervenable = config_das_parallel(model, layers, device, w)
     
     # create dataset
     for intervention in ["op4", "op5", "op6"]:
+        print(f"Creating dataset for {intervention}")
         dataset = util_data.make_counterfactual_dataset(
             "all2",
-            interventions,
+            [intervention],
             vocab,
             texts,
             labels,
@@ -477,6 +479,8 @@ if __name__ == "__main__":
             device, 
             batch_size=batch_size
         )
+        print(f"Dataset created for {intervention}")
+        print(f"Finding candidates for {intervention}")
         candidate, weight = find_candidate_alignments(
             model,
             dataset,
@@ -484,7 +488,7 @@ if __name__ == "__main__":
             layers,
             batch_size,
             device,
-            n_candidates=5
+            n_candidates=72
         )
         candidates[intervention] = candidate
         weights[intervention] = weight
@@ -492,7 +496,7 @@ if __name__ == "__main__":
     # save the candidates
     with open(f"candidates2.json", "w") as f:
         json.dump(candidates, f, indent=4)
-
+    print("Candidates saved to candidates2.json")
 
 
     #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
