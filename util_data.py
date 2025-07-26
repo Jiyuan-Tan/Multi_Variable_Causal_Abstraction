@@ -277,8 +277,12 @@ def make_counterfactual_dataset_ft(causal_model, vocab, intervention:str, sample
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        base_id[intervention] =  dp["source_labels"][0][intervention]
-        dp["labels"] = causal_model.run_forward(base_id)
+        # Create intervened input by copying base_id and applying interventions
+        intervened_id = base_id.copy()
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
+        
+        dp["intervened_input_ids"] = intervened_id
+        dp["labels"] = causal_model.run_forward(intervened_id)
         #print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
@@ -347,8 +351,12 @@ def make_counterfactual_dataset_fixed(causal_model, vocab, intervention:str, sam
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        base_id[intervention] =  dp["source_labels"][0][intervention]
-        dp["labels"] = causal_model.run_forward(base_id)
+        # Create intervened input by copying base_id and applying interventions
+        intervened_id = base_id.copy()
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
+        
+        dp["intervened_input_ids"] = intervened_id
+        dp["labels"] = causal_model.run_forward(intervened_id)
         # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
@@ -419,8 +427,12 @@ def make_counterfactual_dataset_average(causal_model, vocab, intervention:str, s
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        base_id[intervention] =  dp["source_labels"][0][intervention]
-        dp["labels"] = causal_model.run_forward(base_id)
+        # Create intervened input by copying base_id and applying interventions
+        intervened_id = base_id.copy()
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
+        
+        dp["intervened_input_ids"] = intervened_id
+        dp["labels"] = causal_model.run_forward(intervened_id)
         # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
@@ -428,12 +440,7 @@ def make_counterfactual_dataset_average(causal_model, vocab, intervention:str, s
 def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, samplesize:int):
     dataset = []
     for _ in range(samplesize):
-        # Base input:
-        # OP1: FTF
-        # OP2: TFF
-        # OP3: FFT
-        # OP4: TTF
-        # OP5: TTF
+        # truth values of ops all randomized
         t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
         if random.random() < 0.5:
             t2 = t4
@@ -444,44 +451,36 @@ def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, sam
 
         p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
     
-        base_id = {
-            "t0": t0,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "t4": t4,
-            "t5": t5,
-        }
+        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
+
         dp = {"input_ids": base_id}
         dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}
         
         
         t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
 
+        # truth values of source inputs agree with base inputs with 50% probability
         t5s = t5 if random.random() < 0.5 else random.choice(vocab)
         t4s = t4 if random.random() < 0.5 else random.choice(vocab)
         t3s = t3 if random.random() < 0.5 else random.choice(vocab)
-
+        # truth values of ps, qs, rs randomized
         t5s = t0s if random.random() < 0.5 else random.choice(vocab)
         t2s = t4s if random.random() < 0.5 else random.choice(vocab)
         t1s = t3s if random.random() < 0.5 else random.choice(vocab)
 
-        source_id = {
-            "t0": t0s,
-            "t1": t1s,
-            "t2": t2s,
-            "t3": t3s,
-            "t4": t4s,
-            "t5": t5s,
-        }
+        source_id = {"t0": t0s,"t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
 
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
+        # Create intervened input by copying base_id and applying interventions
+        intervened_id = base_id.copy()
         for intervention in interventions:
-            base_id[intervention] =  dp["source_labels"][0][intervention]
-        dp["labels"] = causal_model.run_forward(base_id)
-        # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
+            intervened_id[intervention] = dp["source_labels"][0][intervention]
+        
+        dp["intervened_input_ids"] = intervened_id
+        dp["labels"] = causal_model.run_forward(intervened_id)
+        # content of dp: "input_ids" (t0 to t5), "base_labels" (op1 to op5), "source_input_ids" , "source_labels", "intervened_input_ids", "labels". 
         dataset.append(dp)
     return dataset
 
@@ -504,14 +503,7 @@ def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, sa
 
         p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
     
-        base_id = {
-            "t0": t0,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "t4": t4,
-            "t5": t5,
-        }
+        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
         dp = {"input_ids": base_id}
         dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p or r, "op5": q or r, "op6": (p and q) or r}
         
@@ -526,21 +518,18 @@ def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, sa
         t2s = t4s if random.random() < 0.5 else random.choice(vocab)
         t1s = t3s if random.random() < 0.5 else random.choice(vocab)
 
-        source_id = {
-            "t0": t0s,
-            "t1": t1s,
-            "t2": t2s,
-            "t3": t3s,
-            "t4": t4s,
-            "t5": t5s,
-        }
+        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
 
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs,"op6": (ps and qs) or rs}]
+        # Create intervened input by copying base_id and applying interventions
+        intervened_id = base_id.copy()
         for intervention in interventions:
-            base_id[intervention] =  dp["source_labels"][0][intervention]
-        dp["labels"] = causal_model.run_forward(base_id)
+            intervened_id[intervention] = dp["source_labels"][0][intervention]
+        
+        dp["intervened_input_ids"] = intervened_id
+        dp["labels"] = causal_model.run_forward(intervened_id)
         # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
@@ -594,10 +583,15 @@ def make_counterfactual_dataset(
         base_texts = format_input(dp["input_ids"], dp["context_texts"], dp["context_labels"])
 
         source_texts = format_input(dp["source_input_ids"][0], dp["context_texts_source"], dp["context_labels_source"])
+        
+        # Add intervened input tokenization
+        intervened_texts = format_input(dp["intervened_input_ids"], dp["context_texts"], dp["context_labels"])
+        
         data_tokenized.append(
             {
                 "input_ids": tokenizer(base_texts, return_tensors="pt")["input_ids"].to(device),
                 "source_input_ids": tokenizer(source_texts, return_tensors="pt")["input_ids"].to(device),
+                "intervened_input_ids": tokenizer(intervened_texts, return_tensors="pt")["input_ids"].to(device),
                 "labels": tokenizer(str(dp["labels"][op_out]), return_tensors="pt")["input_ids"].to(device),
                 "source_labels": tokenizer(str(dp["source_labels"][0][op_out]), return_tensors="pt")["input_ids"].to(device),
             }
