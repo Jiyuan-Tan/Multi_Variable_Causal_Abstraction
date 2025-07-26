@@ -312,6 +312,13 @@ def save_weight(weights, name: str, path: str):
     if not os.path.exists(path):
         os.mkdir(path)
     name = os.path.join(path, name)
+    # Check that all values are dicts of state_dicts (not modules)
+    for key, subdict in weights.items():
+        if not isinstance(subdict, dict):
+            raise RuntimeError(f"weights['{key}'] is not a dict (got {type(subdict)})")
+        for subkey, value in subdict.items():
+            if not isinstance(value, dict):
+                raise RuntimeError(f"weights['{key}']['{subkey}'] is not a state_dict (got {type(value)})")
     # Save state dict of interventions
     torch.save(weights, name)
     print(f"Model saved to {name}")
@@ -367,7 +374,7 @@ def find_candidate_alignments(
             intervenable.disable_model_gradients()
             acc = das_test(intervenable, pos, test_dataset, batch_size)
             candidates[(layer, pos)] = acc
-            weights[(layer, pos)] = intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer
+            weights[(layer, pos)] = intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer.state_dict()
 
     # sort the candidates by accuracy
     candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
@@ -492,11 +499,14 @@ if __name__ == "__main__":
         )
         candidates[intervention] = candidate
         weights[intervention] = weight
-        
-    # save the candidates
-    with open(f"candidates2.json", "w") as f:
-        json.dump(candidates, f, indent=4)
-    print("Candidates saved to candidates2.json")
+         # save the candidates
+        with open(f"candidates2.json", "w") as f:
+            json.dump(candidates, f, indent=4)
+        print("Candidates saved to candidates2.json")
+
+        # save the weights
+        save_weight(weights, f"das_weights.pt", "das_weights")
+
 
 
     #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
