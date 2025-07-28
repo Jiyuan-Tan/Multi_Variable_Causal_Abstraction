@@ -223,217 +223,227 @@ def data_filter(op_out, causal_model, model, tokenizer, dataset, device, batch_s
     
     return new_dataset
 
-
-# Inetrvention: FALSE to TRUE, SOURCE -> BASE
-# OP1: TFF -> FTF
-# OP2: FTF -> TFF
-# OP3: FFT -> FFF
-# OP4: TTF -> FFF
-# OP5: TTT -> FFF
-def make_counterfactual_dataset_ft(causal_model, vocab, intervention:str, samplesize:int):
-    dataset = []
-
-    for _ in range(samplesize):
-        # default: FFF
-        t0, t1, t2, t3 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), 
-        t4 = t2 if intervention != "op2" else random.choice(vocab)
-        t5 = t0 if intervention != "op1" else random.choice(vocab)
-
-        p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
+def influenced_ops(source_code: str, base_code: str):
+    """
+    Returns the list of operations that are influenced when transitioning from source_code to base_code.
     
-        base_id = {
-            "t0": t0,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "t4": t4,
-            "t5": t5,
-        }
-        dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}
+    Args:
+        source_code: 3-bit binary string representing source state (e.g., "000", "001", etc.)
+        base_code: 3-bit binary string representing base state (e.g., "000", "001", etc.)
+    
+    Returns:
+        List of influenced operations, or empty list if no operations are influenced
+    """
+    interv_op_dict = {
+        # src = 000 (FFF)
+        ("FFF", "FFF"): [],
+        ("FFF", "FFT"): ["op3", "op4a", "op5a"],
+        ("FFF", "FTF"): [],
+        ("FFF", "FTT"): ["op3", "op4a", "op5a"],
+        ("FFF", "TFF"): [],
+        ("FFF", "TFT"): ["op3", "op4a", "op5a"],
+        ("FFF", "TTF"): ["op1", "op2", "op4", "op4a", "op5a"],
+        ("FFF", "TTT"): ["op4a", "op5a"],
         
+        # src = 001 (FFT)
+        ("FFT", "FFF"): ["op3"],
+        ("FFT", "FFT"): [],
+        ("FFT", "FTF"): ["op3", "op4a"],
+        ("FFT", "FTT"): [],
+        ("FFT", "TFF"): ["op3", "op5a"],
+        ("FFT", "TFT"): [],
+        ("FFT", "TTF"): ["op1", "op2", "op4"],
+        ("FFT", "TTT"): [],
         
-        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-        # default: TTF
-        # t5s = t0s
-        # t2s = t4s
+        # src = 010 (FTF)
+        ("FTF", "FFF"): [],
+        ("FTF", "FFT"): ["op3", "op4a"],
+        ("FTF", "FTF"): [],
+        ("FTF", "FTT"): ["op3", "op4a"],
+        ("FTF", "TFF"): ["op2", "op5a"],
+        ("FTF", "TFT"): ["op3", "op4a"],
+        ("FTF", "TTF"): ["op1", "op4", "op4a"],
+        ("FTF", "TTT"): ["op4a"],
+        
+        # src = 011 (FTT)
+        ("FTT", "FFF"): ["op3"],
+        ("FTT", "FFT"): [],
+        ("FTT", "FTF"): ["op3", "op4a"],
+        ("FTT", "FTT"): [],
+        ("FTT", "TFF"): ["op2", "op3", "op5a"],
+        ("FTT", "TFT"): [],
+        ("FTT", "TTF"): ["op1", "op4"],
+        ("FTT", "TTT"): [],
+        
+        # src = 100 (TFF)
+        ("TFF", "FFF"): [],
+        ("TFF", "FFT"): ["op3", "op5a"],
+        ("TFF", "FTF"): ["op1", "op4"],
+        ("TFF", "FTT"): ["op3", "op5a"],
+        ("TFF", "TFF"): [],
+        ("TFF", "TFT"): ["op3", "op5a"],
+        ("TFF", "TTF"): ["op2", "op4", "op5a"],
+        ("TFF", "TTT"): ["op5a"],
+        
+        # src = 101 (TFT)
+        ("TFT", "FFF"): ["op3"],
+        ("TFT", "FFT"): [],
+        ("TFT", "FTF"): ["op1", "op3", "op4a"],
+        ("TFT", "FTT"): [],
+        ("TFT", "TFF"): ["op3", "op5a"],
+        ("TFT", "TFT"): [],
+        ("TFT", "TTF"): ["op2", "op4"],
+        ("TFT", "TTT"): [],
+        
+        # src = 110 (TTF)
+        ("TTF", "FFF"): ["op4"],
+        ("TTF", "FFT"): ["op3"],
+        ("TTF", "FTF"): ["op1", "op4", "op4a"],
+        ("TTF", "FTT"): ["op3"],
+        ("TTF", "TFF"): ["op2", "op4", "op5a"],
+        ("TTF", "TFT"): ["op3"],
+        ("TTF", "TTF"): [],
+        ("TTF", "TTT"): [],
+        
+        # src = 111 (TTT)
+        ("TTT", "FFF"): ["op3", "op4"],
+        ("TTT", "FFT"): [],
+        ("TTT", "FTF"): ["op1", "op3", "op4", "op4a"],
+        ("TTT", "FTT"): [],
+        ("TTT", "TFF"): ["op2", "op3", "op4", "op5a"],
+        ("TTT", "TFT"): [],
+        ("TTT", "TTF"): [],
+        ("TTT", "TTT"): [],
+    }
+    
+    return interv_op_dict[(source_code, base_code)]
 
-        if intervention == "op1" or intervention =="op3": 
-            t0s = t5s
-        if intervention =="op2" or intervention =="op3": 
+def corresponding_intervention(op:str):
+    op_interv_dict = {
+        "op1": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("TFF", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
+        "op2": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TFF"), ("FTT", "TFF"), ("TFF", "TTF"), ("TFT", "TTF"), ("TTF", "TFF"), ("TTT", "TFF")],
+        "op3": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFT", "FFF"), ("FFT", "FTF"), ("FFT", "TFF"), ("FTF", "FFT"), ("FTF", "FTT"), ("FTF", "TFT"), ("FTT", "FFF"), ("FTT", "FTF"), ("FTT", "TFF"), ("TFF", "FFT"), ("TFF", "FTT"), ("TFF", "TFT"), ("TFT", "FFF"), ("TFT", "FTF"), ("TFT", "TFF"), ("TTF", "FFT"), ("TTF", "FTT"), ("TTF", "TFT"), ("TTT", "FFF"), ("TTT", "FTF"), ("TTT", "TFF")],
+        "op4": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("FTT", "TTF"), ("TFF", "FTF"), ("TFT", "TTF"), ("TTF", "FFF"), ("TTF", "FTF"), ("TTF", "TFF"), ("TTT", "FFF"), ("TTT", "FTF"), ("TTT", "TFF")],
+        "op4a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "FTF"), ("FFT", "FTT"), ("FFT", "TFT"), ("FTF", "FFT"), ("FTF", "FTT"), ("FTF", "TFT"), ("FTF", "TTF"), ("FTF", "TTT"), ("FTT", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
+        "op5a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "TFF"), ("FTF", "TFF"), ("FTF", "TTF"), ("FTT", "TFF"), ("TFF", "FFT"), ("TFF", "FTT"), ("TFF", "TFT"), ("TFF", "TTF"), ("TFF", "TTT"), ("TFT", "TFF"), ("TTF", "TFF"), ("TTT", "TFF")],
+    }
+    return op_interv_dict.get(op, [])
+
+def make_counterfactual_dataset_exhaustive(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
+    """
+    Create counterfactual dataset based on specific source and base binary codes.
+    
+    Args:
+        causal_model: The causal model
+        vocab: Vocabulary for token generation
+        source_code: 3-bit binary string (e.g., "000", "001")
+        base_code: 3-bit binary string (e.g., "000", "001") 
+        samplesize: Number of samples to generate
+    """
+    dataset = []
+    
+    # Convert binary codes to boolean values
+    # base_code: "FFF" -> p=False, q=False, r=False
+    # base_code: "FFT" -> p=False, q=False, r=True
+    # etc.
+    p = base_code[0] == 'T'  # First bit
+    q = base_code[1] == 'T'  # Second bit  
+    r = base_code[2] == 'T'  # Third bit
+    
+    # Same for source
+    ps = source_code[0] == 'T'
+    qs = source_code[1] == 'T'
+    rs = source_code[2] == 'T'
+    
+    for _ in range(samplesize):
+        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+
+        if p == False:
+            t2 = t4
+        if q == False:
+            t0 = t5
+        if r == True:
+            t1 = t3
+        
+        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
+        dp = {"input_ids": base_id}
+        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}  
+
+        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        if ps == False:
             t2s = t4s
-        if intervention =="op5" or intervention =="op3": 
+        if qs == False:
+            t0s = t5s
+        if rs == True:
             t1s = t3s
 
-        source_id = {
-            "t0": t0s,
-            "t1": t1s,
-            "t2": t2s,
-            "t3": t3s,
-            "t4": t4s,
-            "t5": t5s,
-        }
-
-        ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
+        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
         dp["source_input_ids"] = [source_id]
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        # Create intervened input by copying base_id and applying interventions
+
         intervened_id = base_id.copy()
         intervened_id[intervention] = dp["source_labels"][0][intervention]
-        
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
-        #print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
 
-def make_counterfactual_dataset_fixed(causal_model, vocab, intervention:str, samplesize:int):
+def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
+    """
+    Create counterfactual dataset based on specific source and base binary codes.
+    
+    Args:
+        causal_model: The causal model
+        vocab: Vocabulary for token generation
+        source_code: 3-bit binary string (e.g., "000", "001")
+        base_code: 3-bit binary string (e.g., "000", "001") 
+        samplesize: Number of samples to generate
+    """
     dataset = []
-
+    
+    # Convert binary codes to boolean values
+    # base_code: "FFF" -> p=False, q=False, r=False
+    # base_code: "FFT" -> p=False, q=False, r=True
+    # etc.
+    p = base_code[0] == 'T'  # First bit
+    q = base_code[1] == 'T'  # Second bit  
+    r = base_code[2] == 'T'  # Third bit
+    
+    # Same for source
+    ps = source_code[0] == 'T'
+    qs = source_code[1] == 'T'
+    rs = source_code[2] == 'T'
+    
     for _ in range(samplesize):
-        # sample t0, t1, t2, t3, t4 such that only intervention is False
-        # t0 = random.choice(vocab) 
-        # t5 = t0 if random.random() < 0.5 else random.choice(vocab)
-        # t1 = random.choice(vocab)
-        # t3 = t1 if random.random() < 0.5 else random.choice(vocab)
-        # t4 = random.choice(vocab)
-        # t2 = t4 if random.random() < 0.5 else random.choice(vocab)
-        # defaylt: TTF
         t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-        if intervention == "op1" or intervention == "op5":
-            t2 = t4 
-        if intervention == "op2" or intervention == "op5":
-            t0 = t5
-        if intervention == "op3":
+
+        if p == False:
             t2 = t4
+        if q == False:
             t0 = t5
+        if r == True:
             t1 = t3
-    
-        p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
-    
-        base_id = {
-            "t0": t0,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "t4": t4,
-            "t5": t5,
-        }
+        
+        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
         dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}
-        
-        
+        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p or r, "op5": q or r, "op6": (p and q) or r}  
+
         t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-
-        t5s = t0s = t5
-        t2s = t4s = t4
-
-        # t0s, t1s, t2s, t3s, t4s = t0, t1, t2, t3, t4
-        # default: TTF
-        
-        if intervention == "op1" or intervention == "op4" or intervention == "op5":
-            t2s = t4s if t2 != t4 else random.choice(vocab)
-        if intervention == "op2" or intervention == "op4" or intervention == "op5":
-            t0s = t5s if t0 != t5 else random.choice(vocab)
-        if intervention == "op3" or intervention == "op5":
-            t0s, t2s = random.choice(vocab), random.choice(vocab)
-            t1s = t3s if t1 != t3 else random.choice(vocab)
-
-        source_id = {
-            "t0": t0s,
-            "t1": t1s,
-            "t2": t2s,
-            "t3": t3s,
-            "t4": t4s,
-            "t5": t5s,
-        }
-
-        ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
-        dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        # Create intervened input by copying base_id and applying interventions
-        intervened_id = base_id.copy()
-        intervened_id[intervention] = dp["source_labels"][0][intervention]
-        
-        dp["intervened_input_ids"] = intervened_id
-        dp["labels"] = causal_model.run_forward(intervened_id)
-        # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
-        dataset.append(dp)
-    return dataset
-
-def make_counterfactual_dataset_average(causal_model, vocab, intervention:str, samplesize:int):
-    dataset = []
-
-    for _ in range(samplesize):
-        # Base input:
-        # OP1: FTF
-        # OP2: TFF
-        # OP3: FFT
-        # OP4: TTF
-        # OP5: TTF
-        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-        if (intervention == "op1" or intervention == "op5"):
-            t2 = t4 
-        if (intervention == "op2" or intervention == "op5"):
-            t0 = t5
-        if intervention == "op3" and random.random() < 0.5:
-            t2 = t4
-            t0 = t5
-            t1 = t3
-
-        if intervention == "op4" and random.random() < 0.5:
-            t1 = t3
-    
-        p, q, r= (t2 != t4), (t0 != t5), (t1 == t3)
-    
-        base_id = {
-            "t0": t0,
-            "t1": t1,
-            "t2": t2,
-            "t3": t3,
-            "t4": t4,
-            "t5": t5,
-        }
-        dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}
-        
-        
-        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-
-        t5s = t0s if random.random() < 0.5 else random.choice(vocab)
-        t2s = t4s if random.random() < 0.5 else random.choice(vocab)
-
-        # t0s, t1s, t2s, t3s, t4s = t0, t1, t2, t3, t4
-        
-        if (intervention == "op1" or intervention == "op4" or intervention == "op5"):
-            t2s = t4s if t2 != t4 else random.choice(vocab)
-        if intervention == "op2" or intervention == "op4" or intervention == "op5":
-            t0s = t5s if t0 != t5 else random.choice(vocab)
-        if intervention == "op3" or intervention == "op5":
-            t0s, t2s = random.choice(vocab), random.choice(vocab)
-            t1s = t3s if t1 != t3 else random.choice(vocab)
-        if intervention == "op4" and random.random() < 0.5:
+        if ps == False:
+            t2s = t4s
+        if qs == False:
+            t0s = t5s
+        if rs == True:
             t1s = t3s
 
-        source_id = {
-            "t0": t0s,
-            "t1": t1s,
-            "t2": t2s,
-            "t3": t3s,
-            "t4": t4s,
-            "t5": t5s,
-        }
-
-        ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
+        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
         dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
-        # Create intervened input by copying base_id and applying interventions
+        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs, "op6": (ps and qs) or rs}]
+
         intervened_id = base_id.copy()
         intervened_id[intervention] = dp["source_labels"][0][intervention]
-        
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
-        # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
         dataset.append(dp)
     return dataset
 

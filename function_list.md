@@ -10,6 +10,8 @@
 * `format_input(raw_input, context_texts, context_labels)`: Format the input for the model in the form of "context1=label1\n context2=label2\n ...input=t0,t1,t2,t3,t4,t5=". This is good for in-context learning. 
 * `data_filter(causal_model, model, tokenizer, dataset, device, batch_size = 16)`:This function filters the dataset based on the model's predictions. It checks if the model's predictions for both base and source inputs match the labels in the dataset. If they do, the data point is kept; otherwise, it is discarded. The function returns a new filtered dataset.
 * `make_counterfactual_dataset(...)`: This function takes in `dataset_type`, `interv`, `vocab`, `texts`, `labels`, `output_op`, `equality_model`, `model`, `tokenizer`, `data_size`, `device`, `batch_size = 32`. It generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized and is in the ICL format.
+* `influenced_ops(source_code: str, base_code: str)`: Generates ops that will flip the output given the source and the base input types. 
+* `corresponding_intervention`: Generated source and base input types corresponding to an operation. 
 
 
 **Below are four contefactual dataset types.** 【TO CHECK】
