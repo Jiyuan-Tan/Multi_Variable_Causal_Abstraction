@@ -228,9 +228,9 @@ def influenced_ops(source_code: str, base_code: str):
     Returns the list of operations that are influenced when transitioning from source_code to base_code.
     
     Args:
-        source_code: 3-bit binary string representing source state (e.g., "000", "001", etc.)
-        base_code: 3-bit binary string representing base state (e.g., "000", "001", etc.)
-    
+        source_code: 3-bit binary string representing source state (e.g., "FFF", "FFT", etc.)
+        base_code: 3-bit binary string representing base state (e.g., "FFF", "FFT", etc.)
+
     Returns:
         List of influenced operations, or empty list if no operations are influenced
     """
@@ -336,8 +336,8 @@ def make_counterfactual_dataset_exhaustive(causal_model, vocab, intervention:str
     Args:
         causal_model: The causal model
         vocab: Vocabulary for token generation
-        source_code: 3-bit binary string (e.g., "000", "001")
-        base_code: 3-bit binary string (e.g., "000", "001") 
+        source_code: 3-bit binary string (e.g., "FFF", "FFT")
+        base_code: 3-bit binary string (e.g., "FFF", "FFT") 
         samplesize: Number of samples to generate
     """
     dataset = []
