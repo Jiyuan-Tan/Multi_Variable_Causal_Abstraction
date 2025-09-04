@@ -329,7 +329,8 @@ def corresponding_intervention(op:str):
     }
     return op_interv_dict.get(op, [])
 
-def make_counterfactual_dataset_exhaustive(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
+def make_counterfactual_dataset_exhaustive(causal_model, vocab, interventions: list, 
+                                           samplesize:int, source_code:str, base_code:str):
     """
     Create counterfactual dataset based on specific source and base binary codes.
     
@@ -382,13 +383,14 @@ def make_counterfactual_dataset_exhaustive(causal_model, vocab, intervention:str
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
 
         intervened_id = base_id.copy()
-        intervened_id[intervention] = dp["source_labels"][0][intervention]
+        for intervention in interventions:
+            intervened_id[intervention] = dp["source_labels"][0][intervention]
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
         dataset.append(dp)
     return dataset
 
-def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
+def make_counterfactual_dataset_exhaustive2(causal_model, vocab, interventions:list, samplesize:int, source_code:str, base_code:str):
     """
     Create counterfactual dataset based on specific source and base binary codes.
     
@@ -441,7 +443,8 @@ def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:st
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs, "op6": (ps and qs) or rs}]
 
         intervened_id = base_id.copy()
-        intervened_id[intervention] = dp["source_labels"][0][intervention]
+        for intervention in interventions:
+            intervened_id[intervention] = dp["source_labels"][0][intervention]
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
         dataset.append(dp)
@@ -556,7 +559,9 @@ def make_counterfactual_dataset(
     tokenizer,
     data_size,
     device, 
-    batch_size = 32):
+    batch_size = 32,
+    source_code = "FFF",
+    base_code = "TTF"):
     '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.'''
 
     if dataset_type == "fixed":
@@ -569,10 +574,17 @@ def make_counterfactual_dataset(
         make_raw_data = make_counterfactual_dataset_all
     elif dataset_type == "all2":
         make_raw_data = make_counterfactual_dataset_all2
+    elif dataset_type == "exhaustive":
+        make_raw_data = make_counterfactual_dataset_exhaustive
+    elif dataset_type == "exhaustive2":
+        make_raw_data = make_counterfactual_dataset_exhaustive2
     else:
         raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t']")
 
-    dataset =  make_raw_data(equality_model, vocab, interv, data_size)
+    if dataset_type in ["exhaustive", "exhaustive2"]:
+        dataset =  make_raw_data(equality_model, vocab, interv, data_size, source_code, base_code)
+    else:
+        dataset =  make_raw_data(equality_model, vocab, interv, data_size)
 
     # create context for base and source data
     for dp in dataset:

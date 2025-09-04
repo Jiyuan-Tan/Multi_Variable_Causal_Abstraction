@@ -180,12 +180,13 @@ def das_test(intervenable, pos, test_dataset, batch_size = 64):
     acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
     return acc
 
-def config_das(model, layer, device):
+def config_das(model, layer, device, weight=None):
     '''The function is used to set up the configuration for DAS intervention and wrap the model as an IntervenableModel.
     Input: 
         model: the model to be used
         layer: the layer to be used for intervention
         device: the device to be used
+        weight: the weight of the intervention, optional
     Output:
         intervenable: the model with the intervention
     This function will create an IntervenableModel with the given configuration.'''
@@ -204,6 +205,11 @@ def config_das(model, layer, device):
             intervention_types=LowRankRotatedSpaceIntervention,
         )
     intervenable = IntervenableModel(config, model)
+    if weight is not None:
+        # Set the weight of the intervention (single layer, always index #0)
+        # Use load_state_dict if weight is a state_dict (OrderedDict)
+        intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer.load_state_dict(weight)
+    
     intervenable.set_device(device)
     intervenable.disable_model_gradients()
     return intervenable
@@ -246,7 +252,8 @@ def config_das_parallel(model, layers, device, weights=None):
                 rec_layer[layer] = 0
             else:
                 rec_layer[layer] += 1
-            intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#{rec_layer[layer]}"].rotate_layer.weight = weights[i].to("cpu")
+            # Use load_state_dict if weights[i] is a state_dict (OrderedDict)
+            intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#{rec_layer[layer]}"].rotate_layer.load_state_dict(weights[i])
         
     intervenable.set_device(device)
     intervenable.disable_model_gradients()
@@ -369,7 +376,7 @@ def find_candidate_alignments(
                 break
             optimizer = torch.optim.Adam(optimizer_params, lr=0.001)
             # train the model
-            DAS_training(intervenable,train_dataset,optimizer,pos=pos,epochs=5,batch_size=batch_size)
+            DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
             # test the model
             intervenable.disable_model_gradients()
             acc = das_test(intervenable, pos, test_dataset, batch_size)
@@ -422,6 +429,28 @@ def select_candidates(node, candidates, causal_model,dataset_generator, weights)
 
         # TBD 
 
+def test_with_weights(model, layer, device, weight, pos, test_dataset, batch_size=64):
+    ''' This function is used to test the model with pre-trained intervention weights.
+    Input:
+        model: the model to be used
+        layer: the layer to be used for intervention
+        device: the device to be used
+        weight: the pre-trained weight (state_dict) of the intervention
+        pos: the position of the intervention, int
+        test_dataset: the testing dataset, contain input_ids, source_input_ids, labels
+        batch_size: the batch size to be used, int
+    Output:
+        acc: the accuracy of the model, float
+    This function will create an intervenable model with pre-trained weights and test its accuracy.'''
+    
+    # Create intervenable model with the pre-trained weight
+    intervenable = config_das(model, layer, device, weight)
+    
+    # Test the model using the existing das_test function
+    acc = das_test(intervenable, pos, test_dataset, batch_size)
+    
+    return acc
+
 if __name__ == "__main__":
     # load data
     vocab, texts, labels = util_data.get_vocab_and_data()
@@ -455,6 +484,8 @@ if __name__ == "__main__":
 
     candidates = {}
 
+    test_results = {}
+
     # #load candidates
     # with open("candidates.json", "r") as f:
     #     candidates = json.load(f)
@@ -469,45 +500,70 @@ if __name__ == "__main__":
     # interventions = ["op1", "op2"]
     # intervenable = config_das_parallel(model, layers, device, w)
     
-    # create dataset
-    for intervention in ["op4", "op5", "op6"]:
-        print(f"Creating dataset for {intervention}")
-        dataset = util_data.make_counterfactual_dataset(
-            "all2",
-            [intervention],
-            vocab,
-            texts,
-            labels,
-            "op6",
-            or_causal_model,
-            model,
-            tokenizer,
-            data_size,
-            device, 
-            batch_size=batch_size
-        )
-        print(f"Dataset created for {intervention}")
-        print(f"Finding candidates for {intervention}")
-        candidate, weight = find_candidate_alignments(
-            model,
-            dataset,
-            poss,
-            layers,
-            batch_size,
-            device,
-            n_candidates=72
-        )
-        candidates[intervention] = candidate
-        weights[intervention] = weight
-         # save the candidates
-        with open(f"candidates2.json", "w") as f:
-            json.dump(candidates, f, indent=4)
-        print("Candidates saved to candidates2.json")
 
-        # save the weights
-        save_weight(weights, f"das_weights.pt", "das_weights")
+    # Read DAS weights
+    das_weights = load_weight("das_weights/das_weights1.pt")
+    # Read candidate alignments
+    with open("das_weights/candidates1.json", "r") as f:
+        candidates_total = json.load(f)
 
 
+    # # create dataset
+    for intervention in ["op4","op5"]:
+        
+        types = util_data.corresponding_intervention(intervention + "a")
+        test_results[intervention] = {}
+        for source_code, base_code in types:
+            results = {}
+            print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code}")
+            dataset = util_data.make_counterfactual_dataset(
+                "exhaustive2",
+                [intervention],
+                vocab,
+                texts,
+                labels,
+                "op6",
+                or_causal_model,
+                model,
+                tokenizer,
+                data_size,
+                device, 
+                batch_size=batch_size,
+                source_code = source_code,
+                base_code = base_code
+            )
+            print(f"Dataset created for {intervention}")
+            # print(f"Finding candidates for {intervention}")
+            # candidate, weight = find_candidate_alignments(
+            #     model,
+            #     dataset,
+            #     poss,
+            #     layers,
+            #     batch_size,
+            #     device,
+            #     n_candidates=72
+            # )
+            weights = das_weights[intervention]
+            candidates = candidates_total[intervention]
+            print(f"Testing candidates for {intervention}")
+            for candidate in candidates.keys():
+                layer, pos = extract_layer_pos(candidate)
+                weight = weights[candidate]
+                acc = test_with_weights(model, layer, device, weight, pos, dataset, batch_size)
+                print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f}")
+
+                results[candidate] = acc
+                test_results[intervention]["s" + source_code + "_b" + base_code] = results
+
+                # Save test results after each intervention to prevent data loss
+                with open(f"Results/test_results_partial_1.json", "w") as f:
+                    json.dump(test_results, f, indent=4)
+                print(f"Partial test results saved after {intervention}")
+
+    # Save final test results
+    with open(f"Results/test_results_2.json", "w") as f:
+        json.dump(test_results, f, indent=4)
+    print("Final test results saved to Results/test_results_2.json")
 
     #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
 
