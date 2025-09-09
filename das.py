@@ -226,12 +226,12 @@ def config_vanilla(model, layer, device):
     config = IntervenableConfig(
             model_type = type(model),
             representations=[
-                RepresentationConfig(
-                    layer,              # layer
-                    "block_output",          # component
-                    "pos",              # intervention unit
-                    1,                  # max number of unit
-                ),
+                {
+                    "layer": layer,              # layer
+                   "component": "block_output",          # component
+                    "unit": "pos",              # intervention unit
+                    "max_number_of_units": 1,
+                },
             ],
             intervention_types=VanillaIntervention,
         )
@@ -541,12 +541,11 @@ if __name__ == "__main__":
 
     # # create dataset
     for intervention in ["op1", "op2", "op3", "op4", "op5"]:
-        
-        types = util_data.corresponding_intervention(intervention + "a")
+        types = util_data.corresponding_intervention(intervention)
         test_results[intervention] = {}
         for source_code, base_code in types:
             results = {}
-            print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code}")
+            print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code} \r")
             dataset = util_data.make_counterfactual_dataset(
                 "exhaustive",
                 [intervention],
@@ -563,7 +562,7 @@ if __name__ == "__main__":
                 source_code = source_code,
                 base_code = base_code
             )
-            print(f"Dataset created for {intervention}")
+            print(f"Dataset created for {intervention}, source: {source_code}, base: {base_code}")
             # print(f"Finding candidates for {intervention}")
             # candidate, weight = find_candidate_alignments(
             #     model,
@@ -576,11 +575,13 @@ if __name__ == "__main__":
             # )
             weights = das_weights[intervention]
             candidates = candidates_total[intervention]
-            print(f"Testing candidates for {intervention}")
+            print(f"Testing candidates for {intervention}, source: {source_code}, base: {base_code}")
             for candidate in candidates.keys():
                 layer, pos = extract_layer_pos(candidate)
                 weight = weights[candidate]
-                acc = test_with_weights(model, layer, device, pos, dataset, batch_size = batch_size, weight = weight)
+                acc = test_with_weights(model, layer, device, pos, 
+                                        dataset, batch_size = batch_size, 
+                                        intervention_type= 'vanilla', weight = None)
                 print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f}")
 
                 results[candidate] = acc
