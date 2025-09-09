@@ -187,6 +187,7 @@ def config_das(model, layer, device, weight=None):
         layer: the layer to be used for intervention
         device: the device to be used
         weight: the weight of the intervention, optional
+        weight: the weight of the intervention, optional
     Output:
         intervenable: the model with the intervention
     This function will create an IntervenableModel with the given configuration.'''
@@ -278,6 +279,8 @@ def config_das_parallel(model, layers, device, weights=None):
                 rec_layer[layer] = 0
             else:
                 rec_layer[layer] += 1
+            # Use load_state_dict if weights[i] is a state_dict (OrderedDict)
+            intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#{rec_layer[layer]}"].rotate_layer.load_state_dict(weights[i])
             # Use load_state_dict if weights[i] is a state_dict (OrderedDict)
             intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#{rec_layer[layer]}"].rotate_layer.load_state_dict(weights[i])
         
@@ -403,6 +406,7 @@ def find_candidate_alignments(
             optimizer = torch.optim.Adam(optimizer_params, lr=0.001)
             # train the model
             DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
+            DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
             # test the model
             intervenable.disable_model_gradients()
             acc = das_test(intervenable, pos, test_dataset, batch_size)
@@ -514,6 +518,8 @@ if __name__ == "__main__":
     layers = range(model.config.n_layer)
 
     candidates = {}
+
+    test_results = {}
 
     test_results = {}
 
