@@ -126,7 +126,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 5, batch_
 
         epoch_iterator.close()  # Close inner progress bar after each epoch
 
-def das_test(intervenable, pos, test_dataset, batch_size = 64):
+def das_test(intervenable, pos, test_dataset, batch_size = 64, intervention_type = 'das'):
     ''' This function is used to test the model with the intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
@@ -158,21 +158,36 @@ def das_test(intervenable, pos, test_dataset, batch_size = 64):
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
                     batch[k] = v.to("cuda")
-
-            _, counterfactual_outputs = intervenable(
-                {"input_ids": batch["input_ids"]},
-                [
-                    {"input_ids": batch["source_input_ids"]},
-                ],
-                {
-                    "sources->base": (
-                        [[[pos]] * batch_size], [[[pos]] * batch_size],
-                    )
-                },
-                subspaces=[
-                    [[0]] * batch_size,
-                ],
-            )
+            
+            if intervention_type == 'das':
+                _, counterfactual_outputs = intervenable(
+                    {"input_ids": batch["input_ids"]},
+                    [
+                        {"input_ids": batch["source_input_ids"]},
+                    ],
+                    {
+                        "sources->base": (
+                            [[[pos]] * batch_size], [[[pos]] * batch_size],
+                        )
+                    },
+                    subspaces=[
+                        [[0]] * batch_size,
+                    ],
+                )
+            elif intervention_type == 'vanilla':
+                _, counterfactual_outputs = intervenable(
+                    {"input_ids": batch["input_ids"]},
+                    [
+                        {"input_ids": batch["source_input_ids"]},
+                    ],
+                    {
+                        "sources->base": (
+                            [[[pos]] * batch_size], [[[pos]] * batch_size],
+                        )
+                    }
+                )
+            else:
+                raise ValueError("intervention_type must be 'das' or 'vanilla'")
             eval_labels += [batch["labels"].squeeze()]
             eval_preds += [counterfactual_outputs.logits[:,-1,:].argmax(dim=-1)]
     eval_labels = torch.cat(eval_labels)
@@ -482,7 +497,7 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
         raise ValueError("intervention_type must be 'das' or 'vanilla'")
     
     # Test the model using the existing das_test function
-    acc = das_test(intervenable, pos, test_dataset, batch_size)
+    acc = das_test(intervenable, pos, test_dataset, batch_size, intervention_type)
     
     return acc
 
@@ -491,7 +506,7 @@ if __name__ == "__main__":
     vocab, texts, labels = util_data.get_vocab_and_data()
 
     # construct causal model
-    or_causal_model = util_data.build_causal_model(vocab)
+    or_causal_model = util_data.build_causal_model2(vocab)
 
     # load trained model
     model, tokenizer = util_model.load_model()
@@ -546,19 +561,19 @@ if __name__ == "__main__":
 
 
     # # create dataset
-    for intervention in ["op1", "op2", "op3", "op4", "op5"]:
-        types = util_data.corresponding_intervention(intervention)
+    for intervention in ["op4", "op5"]:
+        types = util_data.corresponding_intervention(intervention + 'a')
         test_results[intervention] = {}
         for source_code, base_code in types:
             results = {}
             print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code} \r")
             dataset = util_data.make_counterfactual_dataset(
-                "exhaustive",
+                "exhaustive2",
                 [intervention],
                 vocab,
                 texts,
                 labels,
-                "op5",
+                "op6",
                 or_causal_model,
                 model,
                 tokenizer,
@@ -585,23 +600,23 @@ if __name__ == "__main__":
             for candidate in candidates.keys():
                 layer, pos = extract_layer_pos(candidate)
                 weight = weights[candidate]
-                acc = test_with_weights(model, layer, device, pos, 
-                                        dataset, batch_size = batch_size, 
-                                        intervention_type= 'vanilla', weight = None)
+                acc = test_with_weights(model, layer, device, pos,
+                                        dataset, batch_size=batch_size,
+                                        intervention_type='vanilla', weight=None)
                 print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f}")
 
                 results[candidate] = acc
                 test_results[intervention]["s" + source_code + "_b" + base_code] = results
 
                 # Save test results after each intervention to prevent data loss
-                with open(f"Results/test_results_partial_vanilla.json", "w") as f:
+                with open(f"Results/test_results_partial_vanilla2.json", "w") as f:
                     json.dump(test_results, f, indent=4)
                 print(f"Partial test results saved after {intervention}")
 
     # Save final test results
-    with open(f"Results/test_results_vanilla.json", "w") as f:
+    with open(f"Results/test_results_vanilla2.json", "w") as f:
         json.dump(test_results, f, indent=4)
-    print("Final test results saved to Results/test_results_vanilla.json")
+    print("Final test results saved to Results/test_results_vanilla2.json")
 
     #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
 

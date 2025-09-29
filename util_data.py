@@ -278,7 +278,7 @@ def influenced_ops(source_code: str, base_code: str):
         # src = 100 (TFF)
         ("TFF", "FFF"): [],
         ("TFF", "FFT"): ["op3", "op5a"],
-        ("TFF", "FTF"): ["op1", "op4"],
+        ("TFF", "FTF"): ["op1", "op4a"],  
         ("TFF", "FTT"): ["op3", "op5a"],
         ("TFF", "TFF"): [],
         ("TFF", "TFT"): ["op3", "op5a"],
@@ -320,17 +320,16 @@ def influenced_ops(source_code: str, base_code: str):
 
 def corresponding_intervention(op:str):
     op_interv_dict = {
-        "op1": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("TFF", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
+        "op1": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("FTT", "TTF"), ("TFF", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
         "op2": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TFF"), ("FTT", "TFF"), ("TFF", "TTF"), ("TFT", "TTF"), ("TTF", "TFF"), ("TTT", "TFF")],
         "op3": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFT", "FFF"), ("FFT", "FTF"), ("FFT", "TFF"), ("FTF", "FFT"), ("FTF", "FTT"), ("FTF", "TFT"), ("FTT", "FFF"), ("FTT", "FTF"), ("FTT", "TFF"), ("TFF", "FFT"), ("TFF", "FTT"), ("TFF", "TFT"), ("TFT", "FFF"), ("TFT", "FTF"), ("TFT", "TFF"), ("TTF", "FFT"), ("TTF", "FTT"), ("TTF", "TFT"), ("TTT", "FFF"), ("TTT", "FTF"), ("TTT", "TFF")],
-        "op4": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("FTT", "TTF"), ("TFF", "FTF"), ("TFT", "TTF"), ("TTF", "FFF"), ("TTF", "FTF"), ("TTF", "TFF"), ("TTT", "FFF"), ("TTT", "FTF"), ("TTT", "TFF")],
-        "op4a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "FTF"), ("FFT", "FTT"), ("FFT", "TFT"), ("FTF", "FFT"), ("FTF", "FTT"), ("FTF", "TFT"), ("FTF", "TTF"), ("FTF", "TTT"), ("FTT", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
-        "op5a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "TFF"), ("FTF", "TFF"), ("FTF", "TTF"), ("FTT", "TFF"), ("TFF", "FFT"), ("TFF", "FTT"), ("TFF", "TFT"), ("TFF", "TTF"), ("TFF", "TTT"), ("TFT", "TFF"), ("TTF", "TFF"), ("TTT", "TFF")],
+        "op4": [("FFF", "TTF"), ("FFT", "TTF"), ("FTF", "TTF"), ("FTT", "TTF"), ("TFF", "TTF"), ("TFT", "TTF"), ("TTF", "FFF"), ("TTF", "FTF"), ("TTF", "TFF"), ("TTT", "FFF"), ("TTT", "FTF"), ("TTT", "TFF")],
+        "op4a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "FTF"), ("FTF", "FFT"), ("FTF", "FTT"), ("FTF", "TFT"), ("FTF", "TTF"), ("FTF", "TTT"), ("FTT", "FTF"), ("TFF", "FTF"), ("TFT", "FTF"), ("TTF", "FTF"), ("TTT", "FTF")],
+        "op5a": [("FFF", "FFT"), ("FFF", "FTT"), ("FFF", "TFT"), ("FFF", "TTF"), ("FFF", "TTT"), ("FFT", "TFF"), ("FTF", "TFF"), ("FTT", "TFF"), ("TFF", "FFT"), ("TFF", "FTT"), ("TFF", "TFT"), ("TFF", "TTF"), ("TFF", "TTT"), ("TFT", "TFF"), ("TTF", "TFF"), ("TTT", "TFF")]
     }
     return op_interv_dict.get(op, [])
 
-def make_counterfactual_dataset_exhaustive(causal_model, vocab, interventions: list, 
-                                           samplesize:int, source_code:str, base_code:str):
+def make_counterfactual_dataset_exhaustive(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
     """
     Create counterfactual dataset based on specific source and base binary codes.
     
@@ -383,14 +382,13 @@ def make_counterfactual_dataset_exhaustive(causal_model, vocab, interventions: l
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
 
         intervened_id = base_id.copy()
-        for intervention in interventions:
-            intervened_id[intervention] = dp["source_labels"][0][intervention]
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
         dataset.append(dp)
     return dataset
 
-def make_counterfactual_dataset_exhaustive2(causal_model, vocab, interventions:list, samplesize:int, source_code:str, base_code:str):
+def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:str, samplesize:int, source_code:str, base_code:str):
     """
     Create counterfactual dataset based on specific source and base binary codes.
     
@@ -443,8 +441,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, vocab, interventions:l
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs, "op6": (ps and qs) or rs}]
 
         intervened_id = base_id.copy()
-        for intervention in interventions:
-            intervened_id[intervention] = dp["source_labels"][0][intervention]
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
         dataset.append(dp)
@@ -559,9 +556,7 @@ def make_counterfactual_dataset(
     tokenizer,
     data_size,
     device, 
-    batch_size = 32,
-    source_code = "FFF",
-    base_code = "TTF"):
+    batch_size = 32):
     '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.'''
 
     if dataset_type == "fixed":
@@ -574,17 +569,10 @@ def make_counterfactual_dataset(
         make_raw_data = make_counterfactual_dataset_all
     elif dataset_type == "all2":
         make_raw_data = make_counterfactual_dataset_all2
-    elif dataset_type == "exhaustive":
-        make_raw_data = make_counterfactual_dataset_exhaustive
-    elif dataset_type == "exhaustive2":
-        make_raw_data = make_counterfactual_dataset_exhaustive2
     else:
         raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t']")
 
-    if dataset_type in ["exhaustive", "exhaustive2"]:
-        dataset =  make_raw_data(equality_model, vocab, interv, data_size, source_code, base_code)
-    else:
-        dataset =  make_raw_data(equality_model, vocab, interv, data_size)
+    dataset =  make_raw_data(equality_model, vocab, interv, data_size)
 
     # create context for base and source data
     for dp in dataset:
