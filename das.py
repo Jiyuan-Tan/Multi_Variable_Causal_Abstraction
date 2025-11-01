@@ -14,6 +14,7 @@ from pyvene import (
     IntervenableConfig,
 )
 import json 
+import argparse
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Only GPU 1 will be visible. MAKE SURE TO CHANGE THIS TO YOUR PREFERRED GPU
 
 def compute_metrics(eval_preds, eval_labels):
@@ -195,7 +196,7 @@ def das_test(intervenable, pos, test_dataset, batch_size = 64, intervention_type
     acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
     return acc
 
-def config_das(model, layer, device, weight=None):
+def config_das(model, layer, device, weight=None, subspace_dimension=1):
     '''The function is used to set up the configuration for DAS intervention and wrap the model as an IntervenableModel.
     Input: 
         model: the model to be used
@@ -214,8 +215,8 @@ def config_das(model, layer, device, weight=None):
                     "block_output",          # component
                     "pos",              # intervention unit
                     1,                  # max number of unit
-                    low_rank_dimension = 1, # low rank dimension
-                    subspace_partition = [[0, 1]],
+                    low_rank_dimension = subspace_dimension, # low rank dimension
+                    subspace_partition = [[0, subspace_dimension]],
                 ),
             ],
             intervention_types=LowRankRotatedSpaceIntervention,
@@ -391,6 +392,7 @@ def find_candidate_alignments(
     batch_size,
     device,
     n_candidates = 10,
+    subspace_dimension = 1
 ):
     ''' This function is used to find the candidate alignments for the intervention.
     Input: 
@@ -411,7 +413,7 @@ def find_candidate_alignments(
     test_dataset = dataset[int(len(dataset) * 0.6):]
 
     for layer in layers:
-        intervenable = config_das(model, layer, device)
+        intervenable = config_das(model, layer, device, subspace_dimension=subspace_dimension)
         for pos in poss:
             # create optimizer
             optimizer_params = []
@@ -474,7 +476,7 @@ def select_candidates(node, candidates, causal_model,dataset_generator, weights)
 
         # TBD 
 
-def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, intervention_type = 'das', weight = None):
+def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, intervention_type = 'das', weight = None, subspace_dimension=1):
     ''' This function is used to test the model with pre-trained intervention weights.
     Input:
         model: the model to be used
@@ -490,7 +492,7 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
     
     # Create intervenable model with the pre-trained weight
     if intervention_type == 'das':
-        intervenable = config_das(model, layer, device, weight)
+        intervenable = config_das(model, layer, device, weight, subspace_dimension=subspace_dimension)
     elif intervention_type == 'vanilla':
         intervenable = config_vanilla(model, layer, device)
     else:
@@ -502,125 +504,190 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
     return acc
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run DAS training or testing with selectable causal model")
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument("--train", action="store_true", help="Run training to find candidate alignments")
+    mode_group.add_argument("--test", action="store_true", help="Run testing using precomputed weights and candidates")
+    parser.add_argument("--causal-model", choices=["1", "2"], default="1", help="Which causal model to use: 1 (default) or 2")
+    parser.add_argument("--intervention-type", type=str, default='das', help="Type of intervention to use (e.g., 'das')")
+    parser.add_argument("--weights-path", type=str, default=None, help="Path to das weights (.pt) for test mode")
+    parser.add_argument("--candidates-path", type=str, default=None, help="Path to candidates JSON for test mode")
+    parser.add_argument("--data-size", type=int, default=1024, help="Number of examples to generate per dataset")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for dataset creation and evaluation")
+    parser.add_argument("--subspace-dimension", type=int, default=1, help="Dimension of the subspace for intervention")
+    parser.add_argument("--device", type=str, default=None, help="Device to use (e.g., 'cpu' or 'cuda'). If not set, auto-detects.")
+    args = parser.parse_args()
+
     # load data
     vocab, texts, labels = util_data.get_vocab_and_data()
 
-    # construct causal model
-    or_causal_model = util_data.build_causal_model2(vocab)
-
+    # construct causal model based on selection
+    if args.causal_model == "1":
+        or_causal_model = util_data.build_causal_model(vocab)
+    elif args.causal_model == "2":        
+        or_causal_model = util_data.build_causal_model2(vocab)
+    else:
+        raise RuntimeError(f"Unsupported causal model selection: {args.causal_model}")
+    
     # load trained model
     model, tokenizer = util_model.load_model()
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = args.device if args.device is not None else ('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     model = model.to(device)
-    if torch.cuda.is_available():
+    if device.startswith("cuda") and torch.cuda.is_available():
         print(f"Current GPU: {torch.cuda.current_device()}")
 
-    # create dataset
-    data_size = 1024
-    interv = "op4"
-    batch_size = 32
-
-    # # Split the dataset into training and testing sets
-    # training_size = int(len(dataset) * 0.6)
-    # train_dataset = dataset[:training_size]
-    # test_dataset = dataset[training_size:]
+    # create dataset params
+    data_size = args.data_size
+    batch_size = args.batch_size
 
     weights = {}
 
-    # Train the das
+    # Train/test common params
     poss = range(76, 82)
     layers = range(model.config.n_layer)
 
-    candidates = {}
+    if args.causal_model == "1":
+        op_list = ["op1", "op2", "op3", "op4"]
+        data_generator = "all"
+        out_op = "op5"
+    elif args.causal_model == "2":
+        op_list = ["op4a", "op5a"]
+        data_generator = "all2"
+        out_op = "op6a"
+    causal_model_tag = f"or_model_{args.causal_model}"
+    intervention_type = args.intervention_type
+    subspace_dimension=args.subspace_dimension
 
-    test_results = {}
+    if args.train:
+        print("Starting training (finding candidate alignments)")
+        candidates_total = {}
+        das_weights = {}
 
-    test_results = {}
-
-    # #load candidates
-    # with open("candidates.json", "r") as f:
-    #     candidates = json.load(f)
-
-    # # load weights
-    # weights = load_weight("das_weights/das_weights.pt")
-
-    
-    # layers = [5, 6]
-    # poss = [78, 80]
-    # w = [weights["op1"]["L5_P78"], weights["op2"]["L5_P80"]]
-    # interventions = ["op1", "op2"]
-    # intervenable = config_das_parallel(model, layers, device, w)
-    
-
-    # Read DAS weights
-    das_weights = load_weight("das_weights/das_weights1.pt")
-    # Read candidate alignments
-    with open("das_weights/candidates1.json", "r") as f:
-        candidates_total = json.load(f)
-
-
-    # # create dataset
-    for intervention in ["op4", "op5"]:
-        types = util_data.corresponding_intervention(intervention + 'a')
-        test_results[intervention] = {}
-        for source_code, base_code in types:
-            results = {}
-            print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code} \r")
+        for intervention in op_list:
+            candidates_total[intervention] = {}
+            das_weights[intervention] = {}
             dataset = util_data.make_counterfactual_dataset(
-                "exhaustive2",
-                [intervention],
+                data_generator,
+                intervention,
                 vocab,
                 texts,
                 labels,
-                "op6",
+                out_op,
                 or_causal_model,
                 model,
                 tokenizer,
                 data_size,
-                device, 
+                device,
                 batch_size=batch_size,
-                source_code = source_code,
-                base_code = base_code
             )
-            print(f"Dataset created for {intervention}, source: {source_code}, base: {base_code}")
-            # print(f"Finding candidates for {intervention}")
-            # candidate, weight = find_candidate_alignments(
-            #     model,
-            #     dataset,
-            #     poss,
-            #     layers,
-            #     batch_size,
-            #     device,
-            #     n_candidates=72
-            # )
-            weights = das_weights[intervention]
-            candidates = candidates_total[intervention]
-            print(f"Testing candidates for {intervention}, source: {source_code}, base: {base_code}")
-            for candidate in candidates.keys():
-                layer, pos = extract_layer_pos(candidate)
-                weight = weights[candidate]
-                acc = test_with_weights(model, layer, device, pos,
-                                        dataset, batch_size=batch_size,
-                                        intervention_type='vanilla', weight=None)
-                print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f}")
+            print(f"Dataset created for {intervention}")
+            print(f"Finding candidates for {intervention}")
+            candidate, weight = find_candidate_alignments(
+                model,
+                dataset,
+                poss,
+                layers,
+                batch_size,
+                device,
+                n_candidates=72,
+                subspace_dimension=args.subspace_dimension
+            )
+            candidates_total[intervention].update(candidate)
+            das_weights[intervention].update(weight)
 
-                results[candidate] = acc
+        # persist results
+        os.makedirs("training_results", exist_ok=True)
+        intervention_type = 'das'
+        with open(f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+            json.dump(candidates_total, f, indent=4)
+        print(f"Candidate alignments saved to training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
+
+        with open(f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt", "wb") as f:
+            torch.save(das_weights, f)
+        print(f"DAS weights saved to training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt")
+
+    elif args.test:
+        print("Starting testing using provided weights and candidates")
+        if args.intervention_type == 'das':
+            if not args.weights_path:
+                args.weights_path = f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt"
+            if not args.candidates_path:
+                args.candidates_path = f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json"
+
+            # load provided artifacts
+            das_weights = load_weight(args.weights_path)
+            with open(args.candidates_path, "r") as f:
+                candidates_total = json.load(f)
+
+        test_results = {}
+
+        if args.causal_model == "1":
+            data_generator = "exhaustive"
+
+        elif args.causal_model == "2":
+            data_generator = "exhaustive2"
+
+        for intervention in op_list:
+            types = util_data.corresponding_intervention(intervention)
+            test_results[intervention] = {}
+            for source_code, base_code in types:
+                print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code}")
+                dataset = util_data.make_counterfactual_dataset(
+                    data_generator,
+                    intervention,
+                    vocab,
+                    texts,
+                    labels,
+                    out_op,
+                    or_causal_model,
+                    model,
+                    tokenizer,
+                    data_size,
+                    device,
+                    batch_size=batch_size,
+                    source_code=source_code,
+                    base_code=base_code,
+                )
+                print(f"Dataset created for {intervention}, source: {source_code}, base: {base_code}\r")
+
+                # get the candidates for this intervention
+                candidates = candidates_total.get(intervention, {})
+                weights_for_intervention = das_weights.get(intervention, {}) if isinstance(das_weights, dict) else das_weights
+
+                results = {}
+                for candidate in candidates.keys():
+                    layer, pos = extract_layer_pos(candidate)
+                    weight = weights_for_intervention.get(candidate)
+                    if weight is None:
+                        print(f"Warning: weight for candidate {candidate} not found; skipping")
+                        continue
+                    acc = test_with_weights(
+                        model,
+                        layer,
+                        device,
+                        pos,
+                        dataset,
+                        batch_size=batch_size,
+                        intervention_type=intervention_type,
+                        weight=weight,
+                        subspace_dimension=args.subspace_dimension
+                    )
+                    print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f} \r")
+                    results[candidate] = acc
+
                 test_results[intervention]["s" + source_code + "_b" + base_code] = results
 
-                # Save test results after each intervention to prevent data loss
-                with open(f"Results/test_results_partial_vanilla2.json", "w") as f:
+                # Save partial results after each evaluation
+                os.makedirs("test_results", exist_ok=True)
+                with open(f"test_results/test_results_partial_{intervention_type}_{causal_model_tag}.json", "w") as f:
                     json.dump(test_results, f, indent=4)
                 print(f"Partial test results saved after {intervention}")
 
-    # Save final test results
-    with open(f"Results/test_results_vanilla2.json", "w") as f:
-        json.dump(test_results, f, indent=4)
-    print("Final test results saved to Results/test_results_vanilla2.json")
-
-    #acc = parallel_intervention(intervenable, poss, dataset, batch_size)
-
-    #print(f"Accuracy: {acc:.4f}")
+        # Save final test results
+        with open(f"test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+            json.dump(test_results, f, indent=4)
+        print(f"Final test results saved to test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
 
     # Release the GPU memory
     model.cpu()

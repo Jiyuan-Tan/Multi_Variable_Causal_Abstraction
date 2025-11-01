@@ -90,17 +90,17 @@ def build_causal_model(vocab, model_type = 'or_model'):
 def build_causal_model2(vocab, model_type = 'or_model'):
     '''Build a causal model based on the specified model type. 
     The function returns a CausalModel object. 
-    task: (op1 or op3) and (op2 or op3)'''
+    task: (op1a or op3a) and (op2a or op3a)'''
     if model_type == 'or_model':
-        variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1", "op2", "op3", "op4", "op5", "op6"]
+        variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1a", "op2a", "op3a", "op4a", "op5a", "op6a"]
         reps = vocab
         values = {variable: reps for variable in ["t0", "t1", "t2", "t3", "t4", "t5"]}
-        values["op1"] = [True, False]
-        values["op2"] = [True, False]
-        values["op3"] = [True, False]
-        values["op4"] = [True, False]
-        values["op5"] = [True, False]
-        values["op6"] = [True, False]
+        values["op1a"] = [True, False]
+        values["op2a"] = [True, False]
+        values["op3a"] = [True, False]
+        values["op4a"] = [True, False]
+        values["op5a"] = [True, False]
+        values["op6a"] = [True, False]
 
         parents = {
             "t0": [],
@@ -109,12 +109,12 @@ def build_causal_model2(vocab, model_type = 'or_model'):
             "t3": [],
             "t4": [],
             "t5": [],
-            "op1": ["t2", "t4"],
-            "op2": ["t0", "t5"],
-            "op3": ["t1", "t3"],
-            "op4": ["op1", "op3"],
-            "op5": ["op3", "op2"],
-            "op6": ["op4", "op5"],
+            "op1a": ["t2", "t4"],
+            "op2a": ["t0", "t5"],
+            "op3a": ["t1", "t3"],
+            "op4a": ["op1a", "op3a"],
+            "op5a": ["op3a", "op2a"],
+            "op6a": ["op4a", "op5a"],
         }
 
 
@@ -129,12 +129,12 @@ def build_causal_model2(vocab, model_type = 'or_model'):
             "t3": FILLER,
             "t4": FILLER,
             "t5": FILLER,
-            "op1": lambda x, y:  x != y,
-            "op2": lambda x, y:  x != y,
-            "op3": lambda x, y: x == y,
-            "op4": lambda x, y: x or y,
-            "op5": lambda x, y: x or y,
-            "op6": lambda x, y: x and y,
+            "op1a": lambda x, y:  x != y,
+            "op2a": lambda x, y:  x != y,
+            "op3a": lambda x, y: x == y,
+            "op4a": lambda x, y: x or y,
+            "op5a": lambda x, y: x or y,
+            "op6a": lambda x, y: x and y,
         }
 
         pos = {
@@ -144,12 +144,12 @@ def build_causal_model2(vocab, model_type = 'or_model'):
             "t3": (.7,0),
             "t4": (.9,0),
             "t5": (1.1,0),
-            "op1": (.4,1),
-            "op2": (.6,1),
-            "op3": (.8,1),
-            "op4": (.6,2),
-            "op5": (.6,3),
-            "op6": (.6,4),
+            "op1a": (.4,1),
+            "op2a": (.6,1),
+            "op3a": (.8,1),
+            "op4a": (.6,2),
+            "op5a": (.6,3),
+            "op6a": (.6,4),
         }
         causal_model = CausalModel(variables, values, parents, functions, pos=pos)
     else:
@@ -447,7 +447,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:st
         dataset.append(dp)
     return dataset
 
-def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, samplesize:int):
+def make_counterfactual_dataset_all(causal_model, vocab, intervention:str, samplesize:int):
     dataset = []
     for _ in range(samplesize):
         # truth values of ops all randomized
@@ -485,8 +485,7 @@ def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, sam
         dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
         # Create intervened input by copying base_id and applying interventions
         intervened_id = base_id.copy()
-        for intervention in interventions:
-            intervened_id[intervention] = dp["source_labels"][0][intervention]
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
         
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
@@ -494,7 +493,7 @@ def make_counterfactual_dataset_all(causal_model, vocab, interventions:list, sam
         dataset.append(dp)
     return dataset
 
-def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, samplesize:int):
+def make_counterfactual_dataset_all2(causal_model, vocab, intervention:str, samplesize:int):
     dataset = []
     for _ in range(samplesize):
         # Base input:
@@ -515,7 +514,7 @@ def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, sa
     
         base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
         dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p or r, "op5": q or r, "op6": (p and q) or r}
+        dp["base_labels"] = {"op1a": p, "op2a": q, "op3a": r, "op4a": p or r, "op5a": q or r, "op6a": (p and q) or r}
         
         
         t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
@@ -532,12 +531,11 @@ def make_counterfactual_dataset_all2(causal_model, vocab, interventions:list, sa
 
         ps, qs, rs = (t2s != t4s), (t0s != t5s), (t1s == t3s)
         dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs,"op6": (ps and qs) or rs}]
+        dp["source_labels"] = [{"op1a": ps, "op2a": qs, "op3a": rs, "op4a": ps or rs, "op5a": qs or rs,"op6a": (ps and qs) or rs}]
         # Create intervened input by copying base_id and applying interventions
         intervened_id = base_id.copy()
-        for intervention in interventions:
-            intervened_id[intervention] = dp["source_labels"][0][intervention]
-        
+        intervened_id[intervention] = dp["source_labels"][0][intervention]
+
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
         # print(f"Base: {base_id} label: {p and q and r}, \nsource: {source_id}, label: {ps and qs and rs}\nlabel after interchange: {dp["labels"]}")
@@ -556,7 +554,9 @@ def make_counterfactual_dataset(
     tokenizer,
     data_size,
     device, 
-    batch_size = 32):
+    batch_size = 32,
+    source_code = 'FFF',
+    base_code = 'TTT'):
     '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.'''
 
     if dataset_type == "fixed":
@@ -569,8 +569,12 @@ def make_counterfactual_dataset(
         make_raw_data = make_counterfactual_dataset_all
     elif dataset_type == "all2":
         make_raw_data = make_counterfactual_dataset_all2
+    elif dataset_type == "exhaustive":
+        make_raw_data = lambda equality_model, vocab, interv, data_size: make_counterfactual_dataset_exhaustive(equality_model, vocab, interv, data_size, source_code, base_code)
+    elif dataset_type == "exhaustive2":
+        make_raw_data = lambda equality_model, vocab, interv, data_size: make_counterfactual_dataset_exhaustive2(equality_model, vocab, interv, data_size, source_code, base_code)
     else:
-        raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t']")
+        raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t', 'all', 'exhaustive', 'exhaustive2']")
 
     dataset =  make_raw_data(equality_model, vocab, interv, data_size)
 
