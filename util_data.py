@@ -426,7 +426,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:st
         
         base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
         dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p or r, "op5": q or r, "op6": (p and q) or r}  
+        dp["base_labels"] = {"op1a": p, "op2a": q, "op3a": r, "op4a": p or r, "op5a": q or r, "op6a": (p and q) or r}
 
         t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
         if ps == False:
@@ -438,7 +438,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, vocab, intervention:st
 
         source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
         dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps or rs, "op5": qs or rs, "op6": (ps and qs) or rs}]
+        dp["source_labels"] = [{"op1a": ps, "op2a": qs, "op3a": rs, "op4a": ps or rs, "op5a": qs or rs, "op6a": (ps and qs) or rs}]
 
         intervened_id = base_id.copy()
         intervened_id[intervention] = dp["source_labels"][0][intervention]

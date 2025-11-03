@@ -15,7 +15,6 @@ from pyvene import (
 )
 import json 
 import argparse
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Only GPU 1 will be visible. MAKE SURE TO CHANGE THIS TO YOUR PREFERRED GPU
 
 def compute_metrics(eval_preds, eval_labels):
     ''' This function is used to compute the accuracy of the predictions. '''
