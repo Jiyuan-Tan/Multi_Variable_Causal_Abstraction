@@ -15,6 +15,7 @@ from pyvene import (
 )
 import json 
 import argparse
+import numpy as np
 
 def compute_metrics(eval_preds, eval_labels):
     ''' This function is used to compute the accuracy of the predictions. '''
@@ -37,6 +38,27 @@ def batched_random_sampler(data, batch_size):
     for b_i in batch_indices:
         for i in range(b_i * batch_size, (b_i + 1) * batch_size):
             yield i
+
+
+def set_random_seed(seed: int):
+    """Set random seed for python, numpy and torch (CPU and CUDA).
+
+    This helps reproducibility for dataset shuffling, model init and training.
+    """
+    import os
+    # Python
+    random.seed(seed)
+    # OS-level hash seed
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    # NumPy
+    np.random.seed(seed)
+    # Torch
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Deterministic cuDNN (may slow down training)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 5, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
@@ -418,16 +440,17 @@ def find_candidate_alignments(
             optimizer_params = []
             for k, v in intervenable.interventions.items():
                 optimizer_params += [{"params": v.rotate_layer.parameters()}]
-                break
             optimizer = torch.optim.Adam(optimizer_params, lr=0.001)
             # train the model
-            DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
             DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
             # test the model
             intervenable.disable_model_gradients()
             acc = das_test(intervenable, pos, test_dataset, batch_size)
             candidates[(layer, pos)] = acc
-            weights[(layer, pos)] = intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer.state_dict()
+            # Take a safe snapshot of the rotate_layer state_dict so later in-place
+            # changes to the intervenable don't mutate previously stored weights.
+            sd = intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer.state_dict()
+            weights[(layer, pos)] = {k: v.clone().detach().cpu() for k, v in sd.items()}
 
     # sort the candidates by accuracy
     candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
@@ -515,7 +538,12 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for dataset creation and evaluation")
     parser.add_argument("--subspace-dimension", type=int, default=1, help="Dimension of the subspace for intervention")
     parser.add_argument("--device", type=str, default=None, help="Device to use (e.g., 'cpu' or 'cuda'). If not set, auto-detects.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
+
+    # Set random seed early for reproducibility
+    set_random_seed(args.seed)
+    print(f"Using random seed: {args.seed}")
 
     # load data
     vocab, texts, labels = util_data.get_vocab_and_data()
@@ -543,7 +571,7 @@ if __name__ == "__main__":
     weights = {}
 
     # Train/test common params
-    poss = range(76, 82)
+    poss = range(76, 82) 
     layers = range(model.config.n_layer)
 
     if args.causal_model == "1":
