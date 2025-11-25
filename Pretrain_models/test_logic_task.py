@@ -3,7 +3,7 @@
 
 Usage examples (PowerShell):
   export HF_TOKEN= (Replace with your token if needed) 
-  python3 test_logic_task.py --num-examples 1000 --batch-size 16 --local-model-dir "./model_qwen13b" --prompt-version 3 --model-id Qwen/Qwen3-14B
+  python3 test_logic_task.py --num-examples 10 --batch-size 16 --local-model-dir "./model" --prompt-version 3 --model-id Qwen/Qwen3-14B
 
 Notes:
 - This script loads the full model in fp16 (no 8-bit/bitsandbytes path).
@@ -56,15 +56,13 @@ PROMPT_TEMPLATE3 = (
     "Logic function: \n\n"
     "def logic_function1(t0, t1, t2, t3):\n"
     "    return (t0 or t1) and (t2 and t3)\n\n"
-    "logic_function1(t0=True, t1=True, t2=False, t3=True) → false\n"
-    "logic_function1(t0=False, t1=True, t2=True, t3=True) → true\n"
-    "logic_function1(t0=True, t1=False, t2=True, t3=False) → false\n"
-    "Now we have a different logic function to evaluate:\n\n"
-    "def logic_function2(t0, t1, t2, t3):\n"
+    "logic_function1(True, True, False, True)=false\n"
+    "logic_function1(False, True, True, True)=true\n"
+    "logic_function1(True, False, True, False)=false\n"
+    "Now we have a different logic function to evaluate. Return only 'true' or 'false' (lowercase, no punctuation). Don't use step by step reasoning or any additional text.\n\n"
+    "def logic_function2(t0,t1,t2,t3):\n"
     "    return (t0 or t1) and t2 or t3\n\n"
-    "Please evaluate: logic_function2(t0={t0}, t1={t1}, t2={t2}, t3={t3})\n\n"
-    "Return only 'true' or 'false' (lowercase, no punctuation). Do NOT use step-by-step reasoning or any additional text.\n"
-    "Answer:"
+    "Please evaluate: logic_function2({t0},{t1},{t2},{t3})="
 )
 
 
@@ -182,7 +180,6 @@ def generate_examples2(n: int):
     
     return examples
 
-
 def parse_bool_from_text(text: str):
     import re
     s = text.lower()
@@ -197,7 +194,6 @@ def parse_bool_from_text(text: str):
     if token in ("false", "no"):
         return False
     return None
-
 
 def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str | None):
     """Load AutoModelForCausalLM + AutoTokenizer, optionally from a local snapshot.
@@ -227,7 +223,7 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     model = transformers.AutoModelForCausalLM.from_pretrained(
         load_source,
         token=auth_token,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map={"": 1},  # Use only GPU 1
     )
 
@@ -242,7 +238,6 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
 
     print("Model + tokenizer ready (bfloat16, device_map=auto).")
     return model, tokenizer
-
 
 def run(model_id: str, num_examples: int, hf_token: str | None, seed: int, batch_size: int, local_model_dir: str | None, prompt_version: int = 1):
     random.seed(seed)
