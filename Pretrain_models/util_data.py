@@ -6,6 +6,7 @@ import numpy as np
 from pyvene import CausalModel
 import re
 import torch
+from tqdm import tqdm
 
 PROMPT_TEMPLATE1 = (
     "Task: Evaluate the Python expression and return the result.\n\n"
@@ -233,12 +234,11 @@ def format_input(raw_input, tokenizer):
     formatted_input = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
     return formatted_input
 
-
 # filter dataset
 def data_filter(op_out, causal_model, model, tokenizer, dataset, device, batch_size = 16):
     new_dataset = []
 
-    for i in range(0, len(dataset), batch_size):
+    for i in tqdm(range(0, len(dataset), batch_size), desc="Filtering dataset"):
         batch = dataset[i : i + batch_size]
 
         # Prepare all base inputs with system prompt
@@ -618,7 +618,7 @@ def make_counterfactual_dataset(
     tokenizer,
     data_size,
     device, 
-    batch_size = 32,
+    batch_size = 16,
     source_code = 'FFF',
     base_code = 'TTT'):
     '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.'''
@@ -643,6 +643,7 @@ def make_counterfactual_dataset(
     data_tokenized = []
     for i in range(len(dataset)):
         dp = dataset[i]
+
         base_texts = format_input(dp["input_ids"], tokenizer)
 
         source_texts = format_input(dp["source_input_ids"][0], tokenizer)
@@ -650,6 +651,7 @@ def make_counterfactual_dataset(
         # Add intervened input tokenization
         intervened_texts = format_input(dp["intervened_input_ids"], tokenizer)
         
+
         data_tokenized.append(
             {
                 "input_ids": tokenizer(base_texts, 
@@ -658,8 +660,8 @@ def make_counterfactual_dataset(
                                         truncation=True)["input_ids"].to(device),
                 "source_input_ids": tokenizer(source_texts, return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
                 "intervened_input_ids": tokenizer(intervened_texts, return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
-                "labels": tokenizer(str(dp["labels"][op_out]), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
-                "source_labels": tokenizer(str(dp["source_labels"][0][op_out]), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
+                "labels": tokenizer(str(dp["labels"][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
+                "source_labels": tokenizer(str(dp["source_labels"][0][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
             }
         )
     return data_tokenized

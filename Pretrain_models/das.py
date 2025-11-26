@@ -61,31 +61,51 @@ def set_random_seed(seed: int):
 
 def find_positional_indices(sample_input_id, tokenizer, sub_token = 'logic_function2('):
     ''' This function is used to find the positional indices of the first token in the input_ids after sub_token.
+    This returns the position where {t0} appears in the formatted prompt.
     Input:
-        sample_input_id: the input tensor of token ids, tensor
+        sample_input_id: the input tensor of token ids, tensor with shape (1, k)
         tokenizer: the tokenizer used to tokenize the input, transformers.PreTrainedTokenizer
-        sub_token: the sub_token to be found, str
+        sub_token: the sub_token to be found, str (default: 'logic_function2(')
     Output:
-        pos_indices: the positional indices of the first token after the sub_token. If there is multiple occurrences, return the last one. int and the length of input_ids'''
+        pos_indices: the positional indices of the first token after the sub_token (i.e., position of {t0}). 
+                     If there are multiple occurrences, return the last one. int and the length of input_ids'''
     
-    # Tokenize the full input
-    input_ids = sample_input_id
+    # Handle shape (1, k) by squeezing or indexing
+    if len(sample_input_id.shape) == 2 and sample_input_id.shape[0] == 1:
+        input_ids = sample_input_id.squeeze(0)
+    elif len(sample_input_id.shape) == 1:
+        input_ids = sample_input_id
+    else:
+        raise ValueError(f"Unexpected shape for sample_input_id: {sample_input_id.shape}")
     
-    # Tokenize the sub_token to find
-    sub_token_ids = tokenizer.encode(sub_token, add_special_tokens=False)
+    # Decode the full sequence to find the text position
+    full_text = tokenizer.decode(input_ids, skip_special_tokens=False)
     
-    # Find all occurrences of sub_token in input_ids
-    sub_len = len(sub_token_ids)
+    # Find the last occurrence of the sub_token in the decoded text
+    text_pos = full_text.rfind(sub_token)
+    
+    if text_pos == -1:
+        print(f"Warning: '{sub_token}' not found in decoded text")
+        print(f"Decoded text: {full_text}")
+        return -1, len(input_ids)
+    
+    # Now find which token position corresponds to the character position after sub_token
+    target_char_pos = text_pos + len(sub_token)
+    
+    # Decode token by token to find the position
+    current_text = ""
     last_occurrence_pos = -1
     
-    for i in range(len(input_ids) - sub_len + 1):
-        if input_ids[i:i + sub_len] == sub_token_ids:
-            # Found a match, record the position after this occurrence
-            last_occurrence_pos = i + sub_len
+    for i in range(len(input_ids)):
+        current_text = tokenizer.decode(input_ids[:i+1], skip_special_tokens=False)
+        if len(current_text) >= target_char_pos:
+            last_occurrence_pos = i
+            break
     
+    # print(f"Position of first argument (t0): {last_occurrence_pos}")
     return last_occurrence_pos, len(input_ids)
 
-def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 5, batch_size = 64, gradient_accumulation_steps = 1):
+def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
@@ -237,6 +257,7 @@ def das_test(intervenable, pos, test_dataset, batch_size = 64, intervention_type
                 raise ValueError("intervention_type must be 'das' or 'vanilla'")
             eval_labels += [batch["labels"].squeeze()]
             eval_preds += [counterfactual_outputs.logits[:,-1,:].argmax(dim=-1)]
+   
     eval_labels = torch.cat(eval_labels)
     eval_preds = torch.cat(eval_preds)
     acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
@@ -537,16 +558,17 @@ if __name__ == "__main__":
             pos_after_sub_token, input_length = find_positional_indices(
                 sample_input_id=dataset[0]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='logic_function2('
+                sub_token='Please evaluate: logic_function2('
             )
             pos_after_sub_token2, input_length = find_positional_indices(
                 sample_input_id=dataset[1]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='logic_function2('
+                sub_token='Please evaluate: logic_function2('
             )
             if pos_after_sub_token != pos_after_sub_token2:
                 raise RuntimeError("The position after sub_token is not consistent across samples.")
             poss = range(pos_after_sub_token+2, input_length)
+            print(f"Searching positions from {pos_after_sub_token+2} to {input_length-1} for intervention {intervention}")
 
             print(f"Dataset created for {intervention}")
             print(f"Finding candidates for {intervention}")
