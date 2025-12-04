@@ -410,7 +410,8 @@ def find_candidate_alignments(
     batch_size,
     device,
     n_candidates = 10,
-    subspace_dimension = 1
+    subspace_dimension = 1,
+    intervention_name = None
 ):
     ''' This function is used to find the candidate alignments for the intervention.
     Input: 
@@ -464,10 +465,12 @@ def find_candidate_alignments(
             partial_candidates = {f"L{k[0]}_P{k[1]}": v for k, v in candidates.items()}
             partial_weights = {f"L{k[0]}_P{k[1]}": v for k, v in weights.items()}
             
-            with open("results/candidates_partial.json", "w") as f:
+            # Use intervention_name in filename to avoid overwriting results from different ops
+            suffix = f"_{intervention_name}" if intervention_name else ""
+            with open(f"results/candidates_partial{suffix}.json", "w") as f:
                 json.dump(partial_candidates, f, indent=4)
             
-            torch.save(partial_weights, "results/weights_partial.pt")
+            torch.save(partial_weights, f"results/weights_partial{suffix}.pt")
             print(f"Partial results saved ({current_iteration}/{total_iterations} completed)")
 
     # sort the candidates by accuracy
@@ -669,7 +672,8 @@ if __name__ == "__main__":
                 batch_size,
                 device,
                 n_candidates=len(layers)*len(poss),
-                subspace_dimension=args.subspace_dimension
+                subspace_dimension=args.subspace_dimension,
+                intervention_name=intervention
             )
             candidates_total[intervention].update(candidate)
             das_weights[intervention].update(weight)
