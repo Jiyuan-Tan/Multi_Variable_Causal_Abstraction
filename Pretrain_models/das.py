@@ -1,5 +1,7 @@
 '''
-Shell command to run the script: python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache
+Shell command to run the script:
+  Single GPU:  python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 8
+  Multi GPU:   python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 32 --num-gpus 8
 '''
 import os
 import sys
@@ -67,6 +69,37 @@ from pyvene import (
 import json 
 import argparse
 import numpy as np
+
+def get_model_input_device(model):
+    """Get the device where model inputs should be sent.
+    
+    For models with device_map (multi-GPU), this returns the device where
+    the input embeddings are located. For single-device models, returns
+    that device.
+    """
+    # Try to get device from input embeddings (most reliable for multi-GPU)
+    try:
+        embed = model.get_input_embeddings()
+        if embed is not None:
+            return next(embed.parameters()).device
+    except (StopIteration, AttributeError):
+        pass
+    
+    # Fallback: check hf_device_map for the embedding layer
+    if hasattr(model, 'hf_device_map') and model.hf_device_map:
+        # Find the embedding layer device
+        for key, device in model.hf_device_map.items():
+            if 'embed' in key.lower():
+                return torch.device(f"cuda:{device}" if isinstance(device, int) else device)
+        # If no embed found, use the first layer's device
+        first_device = next(iter(model.hf_device_map.values()))
+        return torch.device(f"cuda:{first_device}" if isinstance(first_device, int) else first_device)
+    
+    # Fallback: use first parameter's device
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def compute_metrics(eval_preds, eval_labels):
     ''' This function is used to compute the accuracy of the predictions. '''
@@ -198,7 +231,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
             batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
-                    batch[k] = v.to(f"cuda:{device}")
+                    batch[k] = v.to(device)
 
             # Interchange intervention: Please pay attention to the shape. It can be tricky.
             _, counterfactual_outputs = intervenable(
@@ -277,7 +310,7 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
             batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
-                    batch[k] = v.to(f"cuda:{device}")
+                    batch[k] = v.to(device)
             
             if intervention_type == 'das':
                 _, counterfactual_outputs = intervenable(
@@ -565,6 +598,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--local-model-dir", type=str, default=None, help="Directory to load/save model snapshot (speeds up subsequent runs)")
     parser.add_argument("--hf-cache-dir", type=str, default=None, help="HuggingFace cache directory (sets HF_HOME env var, must be set before imports)")
+    parser.add_argument("--num-gpus", type=int, default=1, help="Number of GPUs to use for model parallelism (use -1 for auto, 0 for CPU)")
     args = parser.parse_args()
 
     # Set random seed early for reproducibility
@@ -579,28 +613,28 @@ if __name__ == "__main__":
     else:
         raise RuntimeError(f"Unsupported causal model selection: {args.causal_model}")
     
-    # load trained model
+    # load trained model with multi-GPU support
+    model, tokenizer = util_model.get_model_and_tokenizer(
+        args.model_id, 
+        hf_token=os.environ.get("HF_TOKEN"), 
+        local_dir=args.local_model_dir,
+        num_gpus=args.num_gpus
+    )
     
-    # Device selection: -2 for auto (all GPUs), -1 for CPU, >= 0 for specific CUDA device
-    if args.device == -2:
-        # Use device_map='auto' for model loading, but set device to 0 for intervention operations
-        device_map = "auto" if torch.cuda.is_available() else None
-        device = 0 if torch.cuda.is_available() else -1
-    else:
-        device_map = None
-        device = args.device
-    
-    model, tokenizer = util_model.get_model_and_tokenizer(args.model_id, hf_token=os.environ.get("HF_TOKEN"), local_dir=args.local_model_dir, device=args.device)
-    print(f"Using device: {device}")
-    
-    if device_map == "auto" and torch.cuda.is_available():
-        # Model will be automatically distributed across all available GPUs
-        num_gpus = torch.cuda.device_count()
-        print(f"Model distributed across all {num_gpus} available GPUs with device_map='auto'")
-        print(f"Using device {device} for intervention operations")
-    elif device >= 0 and torch.cuda.is_available():
-        model = model.to(f"cuda:{device}")
-        print(f"Current GPU: {torch.cuda.current_device()}")
+    # Determine device for tensors - get from model's input embeddings for multi-GPU compatibility
+    if args.num_gpus == -1 or args.num_gpus > 1:
+        # Model is distributed across GPUs via device_map="auto"
+        # Get the device where inputs should be sent (where embeddings are)
+        device = get_model_input_device(model)
+        print(f"Model distributed across GPUs (num_gpus={args.num_gpus})")
+        print(f"Available GPUs: {torch.cuda.device_count()}")
+        print(f"Input device (from model embeddings): {device}")
+    elif args.num_gpus == 1:
+        device = get_model_input_device(model)
+        print(f"Using device: {device}")
+    else:  # num_gpus == 0
+        device = torch.device("cpu")
+        print("Using CPU")
 
     # create dataset params
     data_size = args.data_size
@@ -769,7 +803,9 @@ if __name__ == "__main__":
         print(f"Final test results saved to test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
 
     # Release the GPU memory
-    model.cpu()
+    # For multi-GPU models with device_map, we can't simply call model.cpu()
+    # Just clear the cache instead
+    del model
     torch.cuda.empty_cache()
     print("GPU memory cleared")
 
