@@ -156,13 +156,14 @@ def find_positional_indices(sample_input_id, tokenizer, sub_token = 'logic_funct
     # print(f"Position of first argument (t0): {last_occurrence_pos}")
     return last_occurrence_pos, len(input_ids)
 
-def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
+def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
         train_dataset: the training dataset, contain input_ids, source_input_ids, labels
         optimizer: the optimizer to be used, torch.optim.Adam
         pos: the position of the intervention, int
+        device: the device id to be used, int
         epochs: the number of epochs to train, int
         batch_size: the batch size to be used, int
         gradient_accumulation_steps: the number of steps to accumulate gradients, int
@@ -197,7 +198,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
             batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
-                    batch[k] = v.to("cuda")
+                    batch[k] = v.to(f"cuda:{device}")
 
             # Interchange intervention: Please pay attention to the shape. It can be tricky.
             _, counterfactual_outputs = intervenable(
@@ -244,12 +245,13 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, epochs = 10, batch
 
         epoch_iterator.close()  # Close inner progress bar after each epoch
 
-def das_test(intervenable, pos, test_dataset, batch_size = 64, intervention_type = 'das'):
+def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervention_type = 'das'):
     ''' This function is used to test the model with the intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
         pos: the position of the intervention, int
         test_dataset: the testing dataset, contain input_ids, source_input_ids, labels
+        device: the device id to be used, int
         batch_size: the batch size to be used, int
     Output:
         acc: the accuracy of the model, float
@@ -275,7 +277,7 @@ def das_test(intervenable, pos, test_dataset, batch_size = 64, intervention_type
             batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
-                    batch[k] = v.to("cuda")
+                    batch[k] = v.to(f"cuda:{device}")
             
             if intervention_type == 'das':
                 _, counterfactual_outputs = intervenable(
@@ -428,24 +430,45 @@ def find_candidate_alignments(
     train_dataset = dataset[:int(len(dataset) * 0.6)]
     test_dataset = dataset[int(len(dataset) * 0.6):]
 
+    # Create directory for partial results if it doesn't exist
+    os.makedirs("results", exist_ok=True)
+    
+    total_iterations = len(layers) * len(list(poss))
+    current_iteration = 0
+
     for layer in layers:
         intervenable = config_das(model, layer, device, subspace_dimension=subspace_dimension)
         for pos in poss:
+            current_iteration += 1
+            print(f"\n[{current_iteration}/{total_iterations}] Processing Layer {layer}, Position {pos}")
+            
             # create optimizer
             optimizer_params = []
             for k, v in intervenable.interventions.items():
                 optimizer_params += [{"params": v.rotate_layer.parameters()}]
             optimizer = torch.optim.Adam(optimizer_params, lr=0.001)
             # train the model
-            DAS_training(intervenable, train_dataset, optimizer, pos=pos, epochs=5, batch_size=batch_size)
+            DAS_training(intervenable, train_dataset, optimizer, pos=pos, device=device, epochs=5, batch_size=batch_size)
             # test the model
             intervenable.disable_model_gradients()
-            acc = das_test(intervenable, pos, test_dataset, batch_size)
+            acc = das_test(intervenable, pos, test_dataset, device=device, batch_size=batch_size)
             candidates[(layer, pos)] = acc
+            print(f"Layer {layer}, Position {pos}: Accuracy = {acc:.4f}")
+            
             # Take a safe snapshot of the rotate_layer state_dict so later in-place
             # changes to the intervenable don't mutate previously stored weights.
             sd = intervenable.interventions[f"layer_{layer}_comp_block_output_unit_pos_nunit_1#0"].rotate_layer.state_dict()
             weights[(layer, pos)] = {k: v.clone().detach().cpu() for k, v in sd.items()}
+            
+            # Save partial results after each iteration
+            partial_candidates = {f"L{k[0]}_P{k[1]}": v for k, v in candidates.items()}
+            partial_weights = {f"L{k[0]}_P{k[1]}": v for k, v in weights.items()}
+            
+            with open("results/candidates_partial.json", "w") as f:
+                json.dump(partial_candidates, f, indent=4)
+            
+            torch.save(partial_weights, "results/weights_partial.pt")
+            print(f"Partial results saved ({current_iteration}/{total_iterations} completed)")
 
     # sort the candidates by accuracy
     candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
@@ -516,7 +539,7 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
         raise ValueError("intervention_type must be 'das' or 'vanilla'")
     
     # Test the model using the existing das_test function
-    acc = das_test(intervenable, pos, test_dataset, batch_size, intervention_type)
+    acc = das_test(intervenable, pos, test_dataset, device=device, batch_size=batch_size, intervention_type=intervention_type)
     
     return acc
 
@@ -535,7 +558,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-size", type=int, default=1024, help="Number of examples to generate per dataset")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for dataset creation and evaluation")
     parser.add_argument("--subspace-dimension", type=int, default=1, help="Dimension of the subspace for intervention")
-    parser.add_argument("--device", type=str, default=None, help="Device to use (e.g., 'cpu' or 'cuda'). If not set, auto-detects.")
+    parser.add_argument("--device", type=int, default=0, help="Device to use (0 refers to cuda:0, -2 refer auto, -1 refers cpu). If not set, auto-detects.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--local-model-dir", type=str, default=None, help="Directory to load/save model snapshot (speeds up subsequent runs)")
     parser.add_argument("--hf-cache-dir", type=str, default=None, help="HuggingFace cache directory (sets HF_HOME env var, must be set before imports)")
@@ -555,11 +578,25 @@ if __name__ == "__main__":
     
     # load trained model
     
-    device = args.device if args.device is not None else ('cuda' if torch.cuda.is_available() else 'cpu')
-    model, tokenizer = util_model.get_model_and_tokenizer(args.model_id, hf_token=os.environ.get("HF_TOKEN"), local_dir=args.local_model_dir)
+    # Device selection: -2 for auto (all GPUs), -1 for CPU, >= 0 for specific CUDA device
+    if args.device == -2:
+        # Use device_map='auto' for model loading, but set device to 0 for intervention operations
+        device_map = "auto" if torch.cuda.is_available() else None
+        device = 0 if torch.cuda.is_available() else -1
+    else:
+        device_map = None
+        device = args.device
+    
+    model, tokenizer = util_model.get_model_and_tokenizer(args.model_id, hf_token=os.environ.get("HF_TOKEN"), local_dir=args.local_model_dir, device=args.device)
     print(f"Using device: {device}")
-    model = model.to(device)
-    if device.startswith("cuda") and torch.cuda.is_available():
+    
+    if device_map == "auto" and torch.cuda.is_available():
+        # Model will be automatically distributed across all available GPUs
+        num_gpus = torch.cuda.device_count()
+        print(f"Model distributed across all {num_gpus} available GPUs with device_map='auto'")
+        print(f"Using device {device} for intervention operations")
+    elif device >= 0 and torch.cuda.is_available():
+        model = model.to(f"cuda:{device}")
         print(f"Current GPU: {torch.cuda.current_device()}")
 
     # create dataset params
