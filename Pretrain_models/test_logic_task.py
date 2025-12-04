@@ -18,7 +18,7 @@ from typing import List
 import torch
 import transformers
 
-
+# This prompt is not ideal
 PROMPT_TEMPLATE1 = (
     "Task: Evaluate the following Python expression and return the result.\n\n"
     "Logic function: \n\n"
@@ -33,6 +33,7 @@ PROMPT_TEMPLATE1 = (
     "Answer:"
 )
 
+# Not ideal
 PROMPT_TEMPLATE2 = (
     "Task: Look at the pattern in these examples and determine the output for the given inputs. The pattern involves comparing strings for equality and inequality. The comparison pair is (t0, t5), (t1, t3), (t2, t4)\n\n"
     "Examples:\n"
@@ -50,6 +51,7 @@ PROMPT_TEMPLATE2 = (
     "Answer:"
 )
 
+# Relatively good prompt, good on 14B model, >=90 on QWEN
 PROMPT_TEMPLATE3 = (
     "Task: Evaluate the Python expression and return the result.\n\n"
     "Examples:\n"
@@ -205,14 +207,20 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     if local_dir and os.path.isdir(local_dir) and os.path.isfile(os.path.join(local_dir, "config.json")):
         use_local = True
 
+    # Use project directory for HuggingFace cache instead of home directory
+    project_cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".hf_cache")
+    os.makedirs(project_cache_dir, exist_ok=True)
+
     load_source = local_dir if use_local else model_id
     source_desc = f"local directory '{local_dir}'" if use_local else f"model repo '{model_id}'"
     print(f"Loading model + tokenizer from {source_desc} ...")
+    print(f"Using cache directory: {project_cache_dir}")
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         load_source,
         token=auth_token,
         use_fast=True,
+        cache_dir=None if use_local else project_cache_dir,
     )
     # Ensure pad token exists (Llama often lacks one); map to eos if missing
     if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None) is not None:
@@ -223,8 +231,9 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     model = transformers.AutoModelForCausalLM.from_pretrained(
         load_source,
         token=auth_token,
-        dtype=torch.bfloat16,
-        device_map={"": 1},  # Use only GPU 1
+        torch_dtype=torch.bfloat16,
+        device_map="auto",  # Automatically use available GPU(s)
+        cache_dir=None if use_local else project_cache_dir,
     )
 
     if not use_local and local_dir:

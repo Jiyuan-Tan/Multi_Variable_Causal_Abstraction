@@ -1,8 +1,59 @@
+'''
+Shell command to run the script: python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache
+'''
+import os
+import sys
+
+# Set HuggingFace cache directory BEFORE importing transformers
+# This must happen before any HuggingFace library is imported
+for i, arg in enumerate(sys.argv):
+    if arg == "--hf-cache-dir" and i + 1 < len(sys.argv):
+        os.environ["HF_HOME"] = sys.argv[i + 1]
+        print(f"Using HuggingFace cache directory: {sys.argv[i + 1]}")
+        break
+
 import util_model 
 import util_data 
 import torch
-import os
 import random
+
+# ========== Register Qwen3 support for pyvene ==========
+# Qwen3 has the same architecture as Qwen2, so we reuse the same mappings
+def register_qwen3_for_pyvene():
+    """Register Qwen3 model types with pyvene's type mappings."""
+    try:
+        import transformers.models.qwen3.modeling_qwen3 as qwen3_modeling
+        from pyvene.models.intervenable_modelcard import type_to_module_mapping, type_to_dimension_mapping
+        from pyvene.models.qwen2.modelings_intervenable_qwen2 import (
+            qwen2_type_to_module_mapping,
+            qwen2_type_to_dimension_mapping,
+            qwen2_lm_type_to_module_mapping,
+            qwen2_lm_type_to_dimension_mapping,
+            qwen2_classifier_type_to_module_mapping,
+            qwen2_classifier_type_to_dimension_mapping,
+        )
+        
+        # Register Qwen3 models using Qwen2 mappings (same architecture)
+        if hasattr(qwen3_modeling, 'Qwen3Model'):
+            type_to_module_mapping[qwen3_modeling.Qwen3Model] = qwen2_type_to_module_mapping
+            type_to_dimension_mapping[qwen3_modeling.Qwen3Model] = qwen2_type_to_dimension_mapping
+        
+        if hasattr(qwen3_modeling, 'Qwen3ForCausalLM'):
+            type_to_module_mapping[qwen3_modeling.Qwen3ForCausalLM] = qwen2_lm_type_to_module_mapping
+            type_to_dimension_mapping[qwen3_modeling.Qwen3ForCausalLM] = qwen2_lm_type_to_dimension_mapping
+        
+        if hasattr(qwen3_modeling, 'Qwen3ForSequenceClassification'):
+            type_to_module_mapping[qwen3_modeling.Qwen3ForSequenceClassification] = qwen2_classifier_type_to_module_mapping
+            type_to_dimension_mapping[qwen3_modeling.Qwen3ForSequenceClassification] = qwen2_classifier_type_to_dimension_mapping
+        
+        print("Successfully registered Qwen3 support for pyvene")
+    except ImportError as e:
+        print(f"Warning: Could not register Qwen3 for pyvene: {e}")
+    except Exception as e:
+        print(f"Warning: Error registering Qwen3 for pyvene: {e}")
+
+register_qwen3_for_pyvene()
+# ========================================================
 from tqdm.auto import tqdm
 from tqdm import trange
 from torch.utils.data import DataLoader
@@ -487,6 +538,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None, help="Device to use (e.g., 'cpu' or 'cuda'). If not set, auto-detects.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--local-model-dir", type=str, default=None, help="Directory to load/save model snapshot (speeds up subsequent runs)")
+    parser.add_argument("--hf-cache-dir", type=str, default=None, help="HuggingFace cache directory (sets HF_HOME env var, must be set before imports)")
     args = parser.parse_args()
 
     # Set random seed early for reproducibility
