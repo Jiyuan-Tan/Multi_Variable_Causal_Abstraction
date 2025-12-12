@@ -620,8 +620,17 @@ def make_counterfactual_dataset(
     device, 
     batch_size = 16,
     source_code = 'FFF',
-    base_code = 'TTT'):
-    '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.'''
+    base_code = 'TTT',
+    return_raw = False):
+    '''This function generates a counterfactual tokenized dataset. The output dataset is already filtered and tokenized.
+    
+    Args:
+        return_raw: if True, also return the raw (non-tokenized) dataset with t0-t3 features
+    
+    Returns:
+        data_tokenized: tokenized dataset
+        (optional) raw_dataset: raw dataset with t0-t3 features if return_raw=True
+    '''
 
     if dataset_type == "all":
         make_raw_data = make_counterfactual_dataset_all
@@ -664,4 +673,7 @@ def make_counterfactual_dataset(
                 "source_labels": tokenizer(str(dp["source_labels"][0][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
             }
         )
+    
+    if return_raw:
+        return data_tokenized, dataset
     return data_tokenized

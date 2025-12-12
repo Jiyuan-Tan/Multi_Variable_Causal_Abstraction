@@ -18,22 +18,24 @@ from typing import List
 import torch
 import transformers
 
-# This prompt is not ideal
+
 PROMPT_TEMPLATE1 = (
     "Task: Evaluate the following Python expression and return the result.\n\n"
     "Logic function: \n\n"
     "def logic_function(t0, t1, t2, t3, t4, t5):\n"
-    "    return ((t0 != t5) and (t2 != t4)) or (t1 == t3)\n\n"
+    "    return (t0 != t5) and (t2 != t4) or (t1 == t3)\n\n"
     "Examples:\n"
-    "logic_function(t0='apple', t1='book', t2='cat', t3='dog', t4='egg', t5='fish') → true\n"
+    "logic_function(t0='a', t1='b', t2='c', t3='d', t4='e', t5='f') → true\n"
     "logic_function(t0='x', t1='y', t2='z', t3='w', t4='z', t5='x') → false\n\n"
-    "logic_function(t0='red', t1='blue', t2='green', t3='blue', t4='yellow', t5='red') → true\n"
-    "Now evaluate: logic_function(t0='{t0}', t1='{t1}', t2='{t2}', t3='{t3}', t4='{t4}', t5='{t5}')\n\n"
-    "Return ONLY 'true' or 'false' (lowercase, no punctuation).\n"
+    "logic_function(t0='r', t1='b', t2='g', t3='b', t4='y', t5='r') → true\n"
+    "logic_function(t0='1', t1='5', t2='2', t3='5', t4='2', t5='2') → true\n"
+    "Now evaluate a different logic function. Return ONLY 'true' or 'false' (lowercase, no punctuation).\n"
+    "def logic_function2(t0, t1, t2, t3, t4, t5):\n"
+    "    return (t0 != t5) or (t2 != t4) and (t1 == t3)\n\n"
+    "Please Evaluate: logic_function2(t0 = {t0}, t1 = {t1}, t2 = {t2}, t3 = {t3}, t4 = {t4}, t5 = {t5})"
     "Answer:"
 )
 
-# Not ideal
 PROMPT_TEMPLATE2 = (
     "Task: Look at the pattern in these examples and determine the output for the given inputs. The pattern involves comparing strings for equality and inequality. The comparison pair is (t0, t5), (t1, t3), (t2, t4)\n\n"
     "Examples:\n"
@@ -51,7 +53,6 @@ PROMPT_TEMPLATE2 = (
     "Answer:"
 )
 
-# Relatively good prompt, good on 14B model, >=90 on QWEN
 PROMPT_TEMPLATE3 = (
     "Task: Evaluate the Python expression and return the result.\n\n"
     "Examples:\n"
@@ -67,22 +68,61 @@ PROMPT_TEMPLATE3 = (
     "Please evaluate: logic_function2({t0},{t1},{t2},{t3})="
 )
 
+# Integer comparison task: comparisons among inputs
+# Formula: t0 >= t1 or t1 >= 50 and t3 >= t0
+# Same as: (t0 >= t1) or ((t1 >= 50) and (t3 >= t0))
+PROMPT_TEMPLATE4 = (
+    "Task: Evaluate the logical expression with two-digit integer comparisons.\n\n"
+    "Examples of comparisons:\n"
+    "45 >= 32 = true\n"
+    "12 >= 34 = false\n"
+    "23 >= 55 = false\n"
+    "80 >= 24 = true\n"
+    "Now we introduce the following logic function.\n\n"
+    "def check(t0,t1,t2,t3):\n"
+    "    return t0 >= t1 or t1 >= 50 and t3 >= t0\n\n"
+    "Examples:\n"
+    "check(45,32,18,22)=true\n"
+    "check(12,34,23,11)=false\n"
+    "check(23,55,46,14)=false\n"
+    "check(11,24,14,56)=true\n"
+    "check(22,35,23,11)=false\n"
+    "check(34,62,47,22)=false\n"
+    "Now evaluate the following logical function using two-digit integers. Return only 'true' or 'false' (lowercase, no punctuation).\n\n"
+    "check({t0},{t1},{t2},{t3})="
+)
+
+# Contains Letter task: Check if words contain the letter 'a'
+# Formula: ('a' in w0) or ('a' in w1) and ('a' in w2) and ('a' in w3)
+# Same as: ('a' in w0) or (('a' in w1) and ('a' in w2) and ('a' in w3))
+# Input space: vocab_size^4 possible combinations
+PROMPT_TEMPLATE5 = (
+    "Task: Check if words contain the letter 'a'.\n\n"
+    "def contains_a(w0,w1,w2,w3):\n"
+    "    return 'a' in w0 or 'a' in w1 and 'a' in w2 and 'a' in w3\n\n"
+    "Examples:\n"
+    "contains_a(cat,dog,fish,bird)=true\n"
+    "contains_a(dog,fish,bird,sun)=false\n"
+    "contains_a(sun,apple,water,banana)=true\n"
+    "contains_a(red,blue,green,pink)=false\n"
+    "contains_a(tree,bat,map,pan)=true\n"
+    "contains_a(cup,box,pen,dot)=false\n"
+    "Return only 'true' or 'false' (lowercase, no punctuation).\n\n"
+    "contains_a({w0},{w1},{w2},{w3})="
+)
+
 
 def build_single_token_ids(tokenizer) -> List[int]:
-    """Return a richer list of token ids for sampling.
+    """Return a list of token ids for sampling.
 
     Categories collected (all must be single-token encodings):
-      - ASCII letters (a-z, A-Z) of any length
-      - ASCII digits (0-9) of any length  
-      - Selected punctuation/operators: + - * / = ! ?
-      - Alphanumeric strings of any reasonable length (up to 20 chars)
+      - ASCII letters (a-z, A-Z) of length 1
+      - ASCII digits (0-9) of length 1 
 
     Exclusions:
       - Tokens that decode to 'true' or 'false' (to avoid answer leakage)
       - Tokens containing whitespace or non-ascii characters
       - Tokens that include internal special token markers
-
-    The function includes strings of various lengths to provide a richer vocabulary.
     """
     vocab_size = getattr(tokenizer, "vocab_size", None)
     if vocab_size is None:
@@ -90,9 +130,7 @@ def build_single_token_ids(tokenizer) -> List[int]:
         vocab_size = max(vocab.values()) + 1
 
     valid_tokens: List[int] = []
-
-    allowed_punct = set(["+", "-", "*", "/", "!", "?"])
-    excluded_words = {"true", "false", "="}
+    excluded_words = {"true", "false", "yes", "no"}
 
     for idx in range(vocab_size):
         try:
@@ -112,27 +150,12 @@ def build_single_token_ids(tokenizer) -> List[int]:
             if lower_decoded in excluded_words:
                 continue
 
-            # Accept strings up to reasonable length (20 chars)
-            if len(decoded) > 20:
+            # Only accept single character tokens
+            if len(decoded) != 1:
                 continue
 
-            # Categorize and accept various types of tokens
-            is_valid = False
-            
-            # Accept alphabetic strings of any length
-            if decoded.isalpha():
-                is_valid = True
-            # Accept numeric strings of any length  
-            elif decoded.isdigit():
-                is_valid = True
-            # Accept single character punctuation
-            elif len(decoded) == 1 and decoded in allowed_punct:
-                is_valid = True
-            # Accept alphanumeric strings of any length
-            elif all(ch.isalnum() for ch in decoded):
-                is_valid = True
-            
-            if is_valid:
+            # Accept only single ASCII letters (a-z, A-Z) or single digits (0-9)
+            if decoded.isalpha() or decoded.isdigit():
                 valid_tokens.append(idx)
                 
         except Exception:
@@ -160,7 +183,7 @@ def generate_examples(single_ids: List[int], tokenizer, n: int):
         final_tokens = [t0, t1, t2, t3, t4, t5]
         
         # logical ground truth: ((t2 != t4) and (t0 != t5)) or (t1 == t3)
-        gt = ((t2 != t4) and (t0 != t5)) or (t1 == t3)
+        gt = (t2 != t4) or (t0 != t5) and (t1 == t3)
         examples.append(({f"t{i}": final_tokens[i] for i in range(6)}, gt))
     return examples
 
@@ -178,6 +201,168 @@ def generate_examples2(n: int):
 
         # Store as string representations for template formatting
         tokens_map = {f"t{i}": str([t0, t1, t2, t3][i]).lower() for i in range(4)}
+        examples.append((tokens_map, gt))
+    
+    return examples
+
+def generate_examples_int(n: int):
+    """Generate examples for integer comparison task.
+    Formula: t0 >= t1 or t1 >= 50 and t3 >= t0
+    Same as: (t0 >= t1) or ((t1 >= 50) and (t3 >= t0))
+    
+    Each comparison has 50% probability of being true:
+    - t0 >= t1: 50% true (by conditionally swapping)
+    - t1 >= 50: 50% true (sample from [10,49] or [50,99])
+    - t3 >= t0: 50% true (by conditionally swapping)
+    """
+    examples = []
+    for _ in range(n):
+        # Generate base values
+        t0 = random.randint(10, 99)
+        t2 = random.randint(10, 99)  # t2 is not used in logic but still passed
+        
+        # t1 >= 50: 50% chance true
+        if random.random() < 0.5:
+            t1 = random.randint(50, 99)  # t1 >= 50 is true
+        else:
+            t1 = random.randint(10, 49)  # t1 >= 50 is false
+        
+        # t0 >= t1: 50% chance true
+        # Generate t0 relative to t1 to control this
+        if random.random() < 0.5:
+            # t0 >= t1 should be true
+            t0 = random.randint(t1, 99)
+        else:
+            # t0 >= t1 should be false (t0 < t1)
+            if t1 > 10:
+                t0 = random.randint(10, t1 - 1)
+            else:
+                t0 = 10  # edge case: t1 = 10, so t0 < t1 is impossible with t0 >= 10
+        
+        # t3 >= t0: 50% chance true
+        if random.random() < 0.5:
+            # t3 >= t0 should be true
+            t3 = random.randint(t0, 99)
+        else:
+            # t3 >= t0 should be false (t3 < t0)
+            if t0 > 10:
+                t3 = random.randint(10, t0 - 1)
+            else:
+                t3 = 10  # edge case
+        
+        # Ground truth: t0 >= t1 or t1 >= 50 and t3 >= t0
+        gt = t0 >= t1 or t1 >= 50 and t3 >= t0
+        
+        tokens_map = {
+            "t0": str(t0), "t1": str(t1), "t2": str(t2), "t3": str(t3)
+        }
+        examples.append((tokens_map, gt))
+    
+    return examples
+
+
+def build_alpha_vocab(tokenizer) -> List[str]:
+    """Build vocabulary of single-token words for alphabetical order task.
+    
+    Filters for:
+      - Single-token encodings (word encodes to exactly 1 token)
+      - Lowercase alphabetic words (2-10 characters)
+      - ASCII only, no special characters
+    
+    Exclusions:
+      - 'true', 'false', 'yes', 'no' (to avoid answer leakage)
+      - Words with whitespace or non-alphabetic characters
+    """
+    vocab_size = getattr(tokenizer, "vocab_size", None)
+    if vocab_size is None:
+        vocab = tokenizer.get_vocab()
+        vocab_size = max(vocab.values()) + 1
+
+    valid_words: List[str] = []
+    excluded_words = {"true", "false", "yes", "no"}
+
+    for idx in range(vocab_size):
+        try:
+            token = tokenizer.convert_ids_to_tokens(idx)
+            # Quick reject for special tokens containing brackets or angle markers
+            if any(mark in token for mark in ["<", ">", "[", "]", "▁", "Ġ", "##"]):
+                continue
+            
+            enc = tokenizer.encode(token, add_special_tokens=False)
+            if len(enc) != 1:
+                continue  # must correspond to a single token
+            
+            decoded = tokenizer.decode([idx], clean_up_tokenization_spaces=False).strip()
+            if not decoded or not decoded.isascii():
+                continue
+            if any(ch.isspace() for ch in decoded):
+                continue
+            
+            # Convert to lowercase for comparison
+            word = decoded.lower()
+            
+            # Skip excluded words
+            if word in excluded_words:
+                continue
+            
+            # Accept only lowercase alphabetic words, length 2-10
+            if not word.isalpha():
+                continue
+            if len(word) < 2 or len(word) > 10:
+                continue
+            
+            # Only add if the lowercase version is the same (avoid duplicates)
+            if decoded == word:
+                valid_words.append(word)
+                
+        except Exception:
+            continue
+
+    # Remove duplicates and sort
+    valid_words = sorted(list(set(valid_words)))
+    return valid_words
+
+
+def generate_examples_alpha(vocab: List[str], n: int):
+    """Generate examples for contains letter task.
+    4 words as input, checking if they contain the letter 'a'.
+    Formula: ('a' in w0) or ('a' in w1) and ('a' in w2) and ('a' in w3)
+    Same as: ('a' in w0) or (('a' in w1) and ('a' in w2) and ('a' in w3))
+    
+    This task has:
+    - Large input space (vocab_size^4 combinations)
+    - Each word is typically a single token
+    - Simple check (contains letter 'a')
+    - Causal structure with AND/OR logic
+    - Each word has 50% probability of containing 'a'
+    """
+    # Split vocabulary into words with 'a' and words without 'a'
+    words_with_a = [w for w in vocab if 'a' in w]
+    words_without_a = [w for w in vocab if 'a' not in w]
+    
+    if len(words_with_a) == 0 or len(words_without_a) == 0:
+        raise RuntimeError("Need words both with and without 'a' in vocabulary")
+    
+    examples = []
+    for _ in range(n):
+        # For each word position, 50% chance of containing 'a'
+        words = []
+        for _ in range(4):
+            if random.random() < 0.5:
+                words.append(random.choice(words_with_a))
+            else:
+                words.append(random.choice(words_without_a))
+        
+        w0, w1, w2, w3 = words
+        
+        # Ground truth: ('a' in w0) or ('a' in w1) and ('a' in w2) and ('a' in w3)
+        # Python precedence: and binds tighter than or
+        # So this is: ('a' in w0) or (('a' in w1) and ('a' in w2) and ('a' in w3))
+        gt = ('a' in w0) or ('a' in w1) and ('a' in w2) and ('a' in w3)
+        
+        tokens_map = {
+            "w0": w0, "w1": w1, "w2": w2, "w3": w3
+        }
         examples.append((tokens_map, gt))
     
     return examples
@@ -207,20 +392,14 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     if local_dir and os.path.isdir(local_dir) and os.path.isfile(os.path.join(local_dir, "config.json")):
         use_local = True
 
-    # Use project directory for HuggingFace cache instead of home directory
-    project_cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".hf_cache")
-    os.makedirs(project_cache_dir, exist_ok=True)
-
     load_source = local_dir if use_local else model_id
     source_desc = f"local directory '{local_dir}'" if use_local else f"model repo '{model_id}'"
     print(f"Loading model + tokenizer from {source_desc} ...")
-    print(f"Using cache directory: {project_cache_dir}")
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         load_source,
         token=auth_token,
         use_fast=True,
-        cache_dir=None if use_local else project_cache_dir,
     )
     # Ensure pad token exists (Llama often lacks one); map to eos if missing
     if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None) is not None:
@@ -231,9 +410,8 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     model = transformers.AutoModelForCausalLM.from_pretrained(
         load_source,
         token=auth_token,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",  # Automatically use available GPU(s)
-        cache_dir=None if use_local else project_cache_dir,
+        dtype=torch.bfloat16,
+        device_map={"": 1},  # Use only GPU 1 "auto"
     )
 
     if not use_local and local_dir:
@@ -259,8 +437,12 @@ def run(model_id: str, num_examples: int, hf_token: str | None, seed: int, batch
         prompt_template = PROMPT_TEMPLATE2
     elif prompt_version == 3:
         prompt_template = PROMPT_TEMPLATE3
+    elif prompt_version == 4:
+        prompt_template = PROMPT_TEMPLATE4
+    elif prompt_version == 5:
+        prompt_template = PROMPT_TEMPLATE5
     else:
-        raise ValueError(f"Invalid prompt version: {prompt_version}. Must be 1, 2, or 3.")
+        raise ValueError(f"Invalid prompt version: {prompt_version}. Must be 1, 2, 3, 4, or 5.")
 
     model, tokenizer = get_model_and_tokenizer(model_id, hf_token, local_model_dir)
 
@@ -270,9 +452,22 @@ def run(model_id: str, num_examples: int, hf_token: str | None, seed: int, batch
         raise RuntimeError("Not enough single-token vocabulary items to build examples.")
     print(f"Found {len(single_ids)} single-token vocab entries.")
 
+    # Build alpha vocabulary for prompt version 5
+    alpha_vocab = None
+    if prompt_version == 5:
+        print("Building alphabetical word vocabulary from tokenizer...")
+        alpha_vocab = build_alpha_vocab(tokenizer)
+        if len(alpha_vocab) < 8:
+            raise RuntimeError("Not enough single-token words to build alphabetical examples.")
+        print(f"Found {len(alpha_vocab)} single-token words for alphabetical task.")
+
     print(f"Sampling {num_examples} test examples...")
     if prompt_version == 3:
         examples = generate_examples2(num_examples)
+    elif prompt_version == 4:
+        examples = generate_examples_int(num_examples)
+    elif prompt_version == 5:
+        examples = generate_examples_alpha(alpha_vocab, num_examples)
     else:
         examples = generate_examples(single_ids, tokenizer, num_examples)
 
@@ -287,7 +482,7 @@ def run(model_id: str, num_examples: int, hf_token: str | None, seed: int, batch
         for tokens_map, _ in batch:
             user_prompt = prompt_template.format(**tokens_map)
             messages = [
-                {"role": "system", "content": "Provide your final answer as only the word true or false in lowercase. Do NOT use step-by-step reasoning or any additional text."},
+                {"role": "system", "content": "Provide your final answer as only the word true or false in lowercase."},
                 {"role": "user", "content": user_prompt},
             ]
             if hasattr(tokenizer, "apply_chat_template"):
@@ -303,7 +498,7 @@ def run(model_id: str, num_examples: int, hf_token: str | None, seed: int, batch
 
         gen_out = model.generate(
             **enc,
-            max_new_tokens=5,
+            max_new_tokens=1,
             do_sample=False,
             pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
         )
@@ -343,7 +538,7 @@ def main():
     parser.add_argument("--hf-token", type=str, default=None, help="Hugging Face access token (overrides HF_TOKEN env var)")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for generation to improve GPU utilization")
     parser.add_argument("--local-model-dir", type=str, default=None, help="Directory to load/save model snapshot (speeds up subsequent runs)")
-    parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2, 3], help="Prompt template version: 1=explicit formula, 2=pattern inference from examples, 3=boolean logic")
+    parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2, 3, 4, 5], help="Prompt template version: 1=string comparison, 2=pattern inference, 3=boolean logic (16 inputs), 4=integer comparison (10^6 inputs), 5=alphabetical order (word pairs)")
     args = parser.parse_args()
 
     hf_token = args.hf_token or os.environ.get("HF_TOKEN")

@@ -278,7 +278,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
 
         epoch_iterator.close()  # Close inner progress bar after each epoch
 
-def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervention_type = 'das'):
+def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervention_type = 'das', return_details = False):
     ''' This function is used to test the model with the intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
@@ -286,28 +286,46 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
         test_dataset: the testing dataset, contain input_ids, source_input_ids, labels
         device: the device id to be used, int
         batch_size: the batch size to be used, int
+        return_details: if True, also return per-sample correctness (for creating analysis datasets)
     Output:
         acc: the accuracy of the model, float
+        (optional) details: dict with 'eval_labels', 'eval_preds', 'correct', 'indices' if return_details=True
     This function will test the model with the intervention, and compute the accuracy.'''
     eval_labels = []
     eval_preds = []
+    sample_indices = []  # Track which samples were processed (in order)
+    
     with torch.no_grad():
-        epoch_iterator = tqdm(
-            DataLoader(
+        # When return_details is True, use sequential sampling to preserve order
+        # Otherwise, use batched_random_sampler for standard testing
+        if return_details:
+            # Sequential sampling - process samples in order
+            sampler = range(0, (len(test_dataset) // batch_size) * batch_size, 1)
+            data_loader = DataLoader(
                 test_dataset,
                 batch_size=batch_size,
-                sampler=batched_random_sampler(test_dataset,batch_size),
-            ),
+                shuffle=False,  # Keep order for feature alignment
+            )
+        else:
+            data_loader = DataLoader(
+                test_dataset,
+                batch_size=batch_size,
+                sampler=batched_random_sampler(test_dataset, batch_size),
+            )
+        
+        epoch_iterator = tqdm(
+            data_loader,
             desc=f"Testing",
             position=0,
             leave=False,
         )
 
+        batch_idx = 0
         for batch in epoch_iterator:
             batch["input_ids"] = batch["input_ids"].squeeze(1).squeeze(1)
             batch["source_input_ids"] = batch["source_input_ids"].squeeze(1).squeeze(1)
             #print(batch["input_ids"].shape, batch["source_input_ids"].shape)
-            batch_size = batch["input_ids"].shape[0]
+            current_batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
                     batch[k] = v.to(device)
@@ -320,11 +338,11 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
                     ],
                     {
                         "sources->base": (
-                            [[[pos]] * batch_size], [[[pos]] * batch_size],
+                            [[[pos]] * current_batch_size], [[[pos]] * current_batch_size],
                         )
                     },
                     subspaces=[
-                        [[0]] * batch_size,
+                        [[0]] * current_batch_size,
                     ],
                 )
             elif intervention_type == 'vanilla':
@@ -335,7 +353,7 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
                     ],
                     {
                         "sources->base": (
-                            [[[pos]] * batch_size], [[[pos]] * batch_size],
+                            [[[pos]] * current_batch_size], [[[pos]] * current_batch_size],
                         )
                     }
                 )
@@ -343,10 +361,27 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
                 raise ValueError("intervention_type must be 'das' or 'vanilla'")
             eval_labels += [batch["labels"].squeeze()]
             eval_preds += [counterfactual_outputs.logits[:,-1,:].argmax(dim=-1)]
+            
+            if return_details:
+                # Track sample indices for this batch
+                start_idx = batch_idx * batch_size
+                sample_indices.extend(range(start_idx, start_idx + current_batch_size))
+            batch_idx += 1
    
     eval_labels = torch.cat(eval_labels)
     eval_preds = torch.cat(eval_preds)
     acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
+    
+    if return_details:
+        # Compute per-sample correctness (binary: 1 if correct, 0 otherwise)
+        correct = (eval_preds == eval_labels).int()
+        details = {
+            'eval_labels': eval_labels.cpu().tolist(),
+            'eval_preds': eval_preds.cpu().tolist(),
+            'correct': correct.cpu().tolist(),
+            'indices': sample_indices  # Indices into the original dataset
+        }
+        return acc, details
     return acc
 
 def config_das(model, layer, device, weight=None, subspace_dimension=1):
@@ -552,7 +587,7 @@ def select_candidates(node, candidates, causal_model,dataset_generator, weights)
 
         # TBD 
 
-def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, intervention_type = 'das', weight = None, subspace_dimension=1):
+def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, intervention_type = 'das', weight = None, subspace_dimension=1, return_details=False):
     ''' This function is used to test the model with pre-trained intervention weights.
     Input:
         model: the model to be used
@@ -562,8 +597,10 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
         test_dataset: the testing dataset, contain input_ids, source_input_ids, labels
         weight: the pre-trained weight (state_dict) of the intervention
         batch_size: the batch size to be used, int
+        return_details: if True, also return per-sample correctness (for creating analysis datasets)
     Output:
         acc: the accuracy of the model, float
+        (optional) details: dict with 'eval_labels', 'eval_preds', 'correct' if return_details=True
     This function will create an intervenable model with pre-trained weights and test its accuracy.'''
     
     # Create intervenable model with the pre-trained weight
@@ -575,9 +612,9 @@ def test_with_weights(model, layer, device, pos, test_dataset, batch_size=64, in
         raise ValueError("intervention_type must be 'das' or 'vanilla'")
     
     # Test the model using the existing das_test function
-    acc = das_test(intervenable, pos, test_dataset, device=device, batch_size=batch_size, intervention_type=intervention_type)
+    result = das_test(intervenable, pos, test_dataset, device=device, batch_size=batch_size, intervention_type=intervention_type, return_details=return_details)
     
-    return acc
+    return result
 
 
 
@@ -737,9 +774,12 @@ if __name__ == "__main__":
                 candidates_total = json.load(f)
 
         test_results = {}
+        # Dictionary to store analysis datasets for each (pos, layer) combination
+        # Structure: {intervention: {source_base_key: {candidate: {features: [...], labels: [...]}}}}
+        analysis_datasets = {}
 
         if args.causal_model == "1":
-            data_generator = "exhaustive"
+            data_generator = "all"
 
         elif args.causal_model == "2":
             data_generator = "exhaustive2"
@@ -747,9 +787,11 @@ if __name__ == "__main__":
         for intervention in op_list:
             types = util_data.corresponding_intervention(intervention)
             test_results[intervention] = {}
+            analysis_datasets[intervention] = {}
             for source_code, base_code in types:
                 print(f"Creating dataset for {intervention}, source: {source_code}, base: {base_code}")
-                dataset = util_data.make_counterfactual_dataset(
+                # Get both tokenized and raw dataset (with t0-t3 features)
+                dataset, raw_dataset = util_data.make_counterfactual_dataset(
                     data_generator,
                     intervention,
                     out_op,
@@ -761,21 +803,53 @@ if __name__ == "__main__":
                     batch_size=batch_size,
                     source_code=source_code,
                     base_code=base_code,
+                    return_raw=True,
                 )
                 print(f"Dataset created for {intervention}, source: {source_code}, base: {base_code}\r")
+
+                # Extract t0-t3 features from raw dataset
+                # For causal_model 1: t0, t1, t2, t3 are boolean
+                # For causal_model 2: t0-t5 are from vocab (strings)
+                features_list = []
+                for dp in raw_dataset:
+                    input_ids = dp["input_ids"]
+                    if args.causal_model == "1":
+                        # For causal model 1, t0-t3 are boolean values
+                        features = {
+                            "t0": int(input_ids["t0"]) if isinstance(input_ids["t0"], bool) else input_ids["t0"],
+                            "t1": int(input_ids["t1"]) if isinstance(input_ids["t1"], bool) else input_ids["t1"],
+                            "t2": int(input_ids["t2"]) if isinstance(input_ids["t2"], bool) else input_ids["t2"],
+                            "t3": int(input_ids["t3"]) if isinstance(input_ids["t3"], bool) else input_ids["t3"],
+                        }
+                    else:
+                        # For causal model 2, t0-t5 are strings (from vocab)
+                        features = {
+                            "t0": str(input_ids["t0"]),
+                            "t1": str(input_ids["t1"]),
+                            "t2": str(input_ids["t2"]),
+                            "t3": str(input_ids["t3"]),
+                            "t4": str(input_ids.get("t4", "")),
+                            "t5": str(input_ids.get("t5", "")),
+                        }
+                    features_list.append(features)
 
                 # get the candidates for this intervention
                 candidates = candidates_total.get(intervention, {})
                 weights_for_intervention = das_weights.get(intervention, {}) if isinstance(das_weights, dict) else das_weights
 
                 results = {}
+                source_base_key = "s" + source_code + "_b" + base_code
+                analysis_datasets[intervention][source_base_key] = {}
+                
                 for candidate in candidates.keys():
                     layer, pos = extract_layer_pos(candidate)
                     weight = weights_for_intervention.get(candidate)
                     if weight is None:
                         print(f"Warning: weight for candidate {candidate} not found; skipping")
                         continue
-                    acc = test_with_weights(
+                    
+                    # Get accuracy and detailed per-sample results
+                    acc, details = test_with_weights(
                         model,
                         layer,
                         device,
@@ -784,12 +858,26 @@ if __name__ == "__main__":
                         batch_size=batch_size,
                         intervention_type=intervention_type,
                         weight=weight,
-                        subspace_dimension=args.subspace_dimension
+                        subspace_dimension=args.subspace_dimension,
+                        return_details=True
                     )
                     print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f} \r")
                     results[candidate] = acc
+                    
+                    # Create analysis dataset for this (pos, layer) combination
+                    # Features: t0, t1, t2, t3 (and t4, t5 for causal model 2)
+                    # Label: binary (1 if eval_labels == pred_label, 0 otherwise)
+                    # Use indices to align features with labels (in case some samples were dropped)
+                    aligned_features = [features_list[i] for i in details["indices"]]
+                    analysis_datasets[intervention][source_base_key][candidate] = {
+                        "features": aligned_features,
+                        "labels": details["correct"],  # Binary: 1 if correct, 0 otherwise
+                        "layer": layer,
+                        "pos": pos,
+                        "accuracy": acc
+                    }
 
-                test_results[intervention]["s" + source_code + "_b" + base_code] = results
+                test_results[intervention][source_base_key] = results
 
                 # Save partial results after each evaluation
                 os.makedirs("test_results", exist_ok=True)
@@ -801,6 +889,12 @@ if __name__ == "__main__":
         with open(f"test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
             json.dump(test_results, f, indent=4)
         print(f"Final test results saved to test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
+        
+        # Save analysis datasets to a single file
+        # Convert to a format suitable for JSON serialization
+        with open(f"test_results/analysis_datasets_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+            json.dump(analysis_datasets, f, indent=4)
+        print(f"Analysis datasets saved to test_results/analysis_datasets_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
 
     # Release the GPU memory
     # For multi-GPU models with device_map, we can't simply call model.cpu()
