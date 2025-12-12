@@ -143,16 +143,18 @@ def set_random_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def find_positional_indices(sample_input_id, tokenizer, sub_token = 'logic_function2('):
+def find_positional_indices(sample_input_id, tokenizer, sub_token = 'check(', return_token_mapping=False):
     ''' This function is used to find the positional indices of the first token in the input_ids after sub_token.
     This returns the position where {t0} appears in the formatted prompt.
     Input:
         sample_input_id: the input tensor of token ids, tensor with shape (1, k)
         tokenizer: the tokenizer used to tokenize the input, transformers.PreTrainedTokenizer
-        sub_token: the sub_token to be found, str (default: 'logic_function2(')
+        sub_token: the sub_token to be found, str (default: 'check(')
+        return_token_mapping: if True, also returns a dict mapping position -> token string
     Output:
         pos_indices: the positional indices of the first token after the sub_token (i.e., position of {t0}). 
-                     If there are multiple occurrences, return the last one. int and the length of input_ids'''
+                     If there are multiple occurrences, return the last one. int and the position of '<|im_end|>'
+        token_mapping (optional): dict mapping position (int) -> token (str), only returned if return_token_mapping=True'''
     
     # Handle shape (1, k) by squeezing or indexing
     if len(sample_input_id.shape) == 2 and sample_input_id.shape[0] == 1:
@@ -162,32 +164,58 @@ def find_positional_indices(sample_input_id, tokenizer, sub_token = 'logic_funct
     else:
         raise ValueError(f"Unexpected shape for sample_input_id: {sample_input_id.shape}")
     
+    # Build token mapping if requested
+    token_mapping = {}
+    if return_token_mapping:
+        for i, token_id in enumerate(input_ids):
+            token_mapping[i] = tokenizer.decode([token_id])
+    
     # Decode the full sequence to find the text position
     full_text = tokenizer.decode(input_ids, skip_special_tokens=False)
     
     # Find the last occurrence of the sub_token in the decoded text
     text_pos = full_text.rfind(sub_token)
     
+    # Find the position of '<|im_end|>' token
+    im_end_pos = len(input_ids)  # Default to length if not found
+    im_end_token_id = tokenizer.encode('<|im_end|>', add_special_tokens=False)
+    if len(im_end_token_id) == 1:
+        im_end_token_id = im_end_token_id[0]
+        for i in range(len(input_ids) - 1, -1, -1):  # Search from end
+            if input_ids[i].item() == im_end_token_id:
+                im_end_pos = i
+                break
+    
     if text_pos == -1:
         print(f"Warning: '{sub_token}' not found in decoded text")
         print(f"Decoded text: {full_text}")
-        return -1, len(input_ids)
+        if return_token_mapping:
+            return -1, im_end_pos, token_mapping
+        return -1, im_end_pos
     
     # Now find which token position corresponds to the character position after sub_token
     target_char_pos = text_pos + len(sub_token)
     
-    # Decode token by token to find the position
-    current_text = ""
+    # Decode token by token to find the first token that starts AFTER target_char_pos
+    # We want the token position where the previous tokens' decoded text ends at or before target_char_pos
     last_occurrence_pos = -1
     
     for i in range(len(input_ids)):
-        current_text = tokenizer.decode(input_ids[:i+1], skip_special_tokens=False)
-        if len(current_text) >= target_char_pos:
+        # Get the text decoded up to (but not including) token i
+        prev_text = tokenizer.decode(input_ids[:i], skip_special_tokens=False) if i > 0 else ""
+        # If previous text already covers target position, token i is the first token after sub_token
+        if len(prev_text) >= target_char_pos:
             last_occurrence_pos = i
             break
     
+    # If we never found it (edge case), fall back to last token
+    if last_occurrence_pos == -1:
+        last_occurrence_pos = len(input_ids) - 1
+    
     # print(f"Position of first argument (t0): {last_occurrence_pos}")
-    return last_occurrence_pos, len(input_ids)
+    if return_token_mapping:
+        return last_occurrence_pos, im_end_pos, token_mapping
+    return last_occurrence_pos, im_end_pos
 
 def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
@@ -252,7 +280,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
             eval_metrics = compute_metrics(
             counterfactual_outputs.logits[:,-1,:].argmax(dim=-1), batch["labels"].squeeze()
             )
-
+         
             # loss and backprop
             loss = compute_loss(
                 counterfactual_outputs.logits[:,-1,:], batch["labels"].squeeze()
@@ -262,6 +290,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
                 {"loss": f"{loss.item():.4f}", "acc": f"{eval_metrics['accuracy']:.4f}"},
                 refresh=True
             )
+
             train_iterator.set_postfix(
                 {"loss": f"{loss.item():.4f}", "acc": f"{eval_metrics['accuracy']:.4f}"},
                 refresh=True
@@ -679,8 +708,6 @@ if __name__ == "__main__":
 
     weights = {}
 
-    # Train/test common params
-    poss = range(76, 82) 
     # Handle different model configs: Qwen uses num_hidden_layers, GPT-2 uses n_layer
     num_layers = getattr(model.config, 'num_hidden_layers', getattr(model.config, 'n_layer', None))
     if num_layers is None:
@@ -718,20 +745,28 @@ if __name__ == "__main__":
                 device,
                 batch_size=batch_size,
             )
-            pos_after_sub_token, input_length = find_positional_indices(
+            pos_after_sub_token, input_length, token_mapping = find_positional_indices(
                 sample_input_id=dataset[0]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='Please evaluate: logic_function2('
+                sub_token='logic_function2(',
+                return_token_mapping=True
             )
-            pos_after_sub_token2, input_length = find_positional_indices(
+            pos_after_sub_token2, input_length2 = find_positional_indices(
                 sample_input_id=dataset[1]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='Please evaluate: logic_function2('
+                sub_token='logic_function2('
             )
             if pos_after_sub_token != pos_after_sub_token2:
                 raise RuntimeError("The position after sub_token is not consistent across samples.")
-            poss = range(pos_after_sub_token+2, input_length)
-            print(f"Searching positions from {pos_after_sub_token+2} to {input_length-1} for intervention {intervention}")
+            poss = range(pos_after_sub_token+1, input_length)
+            
+            # Save the position-to-token mapping to a separate file
+            os.makedirs("training_results", exist_ok=True)
+            token_mapping_file = f"training_results/position_token_mapping_{intervention}_{causal_model_tag}.json"
+            with open(token_mapping_file, "w") as f:
+                json.dump(token_mapping, f, indent=4)
+            print(f"Position-to-token mapping saved to {token_mapping_file}")
+            print(f"Searching positions from {pos_after_sub_token+1} to {input_length-1} for intervention {intervention}")
 
             print(f"Dataset created for {intervention}")
             print(f"Finding candidates for {intervention}")
@@ -905,7 +940,8 @@ if __name__ == "__main__":
 
 
 
-
+"""
+Code for parallel intervention (not used currently)
 # The end
 # Parallel intervention code that may be useful later:
 # def config_das_parallel(model, layers, device, weights=None):
@@ -1009,3 +1045,4 @@ if __name__ == "__main__":
 #     eval_preds = torch.cat(eval_preds)
 #     acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
 #     return acc
+"""
