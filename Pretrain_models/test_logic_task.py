@@ -21,19 +21,22 @@ import transformers
 
 PROMPT_TEMPLATE1 = (
     "Task: Evaluate the following Python expression and return the result.\n\n"
+    "Example of equal and not equal comparisons:\n"
+    " 'a' == 'a' → true\n"
+    " 'a' == 'b' → false\n"
+    " 'a' != 'b' → true\n"
+    " 'x' != 'x' → false\n"
     "Logic function: \n\n"
-    "def logic_function(t0, t1, t2, t3, t4, t5):\n"
-    "    return (t0 != t5) and (t2 != t4) or (t1 == t3)\n\n"
+    "def logic_function(t0, t1, t2, t3):\n"
+    "    return (t0 != t1) or (t2 != t3) and (t0 == t3)\n\n"
     "Examples:\n"
-    "logic_function(t0='a', t1='b', t2='c', t3='d', t4='e', t5='f') → true\n"
-    "logic_function(t0='x', t1='y', t2='z', t3='w', t4='z', t5='x') → false\n\n"
-    "logic_function(t0='r', t1='b', t2='g', t3='b', t4='y', t5='r') → true\n"
-    "logic_function(t0='1', t1='5', t2='2', t3='5', t4='2', t5='2') → true\n"
-    "Now evaluate a different logic function. Return ONLY 'true' or 'false' (lowercase, no punctuation).\n"
-    "def logic_function2(t0, t1, t2, t3, t4, t5):\n"
-    "    return (t0 != t5) or (t2 != t4) and (t1 == t3)\n\n"
-    "Please Evaluate: logic_function2(t0 = {t0}, t1 = {t1}, t2 = {t2}, t3 = {t3}, t4 = {t4}, t5 = {t5})"
-    "Answer:"
+    "logic_function(t0='a', t1='b', t2='c', t3='d') → true\n"
+    "logic_function(t0='x', t1='x', t2='y', t3='y') → false\n"
+    "logic_function(t0='r', t1='r', t2='g', t3='r') → true\n"
+    "logic_function(t0='m', t1='n', t2='p', t3='p') → true\n"
+    "logic_function(t0='a', t1='a', t2='b', t3='c') → false\n"
+    "Now evaluate the same logic function with new inputs. Return ONLY 'true' or 'false' (lowercase, no punctuation).\n\n"
+    "Please Evaluate: logic_function(t0='{t0}', t1='{t1}', t2='{t2}', t3='{t3}')="
 )
 
 PROMPT_TEMPLATE2 = (
@@ -164,27 +167,33 @@ def build_single_token_ids(tokenizer) -> List[int]:
     return valid_tokens
 
 def generate_examples(single_ids: List[int], tokenizer, n: int):
+    """Generate examples for template 1: (t0 != t1) or (t2 != t3) and (t0 == t3)
+    
+    Uses 4 tokens with 50% probability of equality for each pair.
+    Python precedence: (t0 != t1) or ((t2 != t3) and (t0 == t3))
+    """
     examples = []
     for _ in range(n):
-        picks = random.sample(single_ids, 6)
+        picks = random.sample(single_ids, 4)
         # decode each single id into a readable string
         tokens = [tokenizer.decode([p], clean_up_tokenization_spaces=False) for p in picks]
-        t0, t1, t2, t3, t4, t5 = tokens
+        t0, t1, t2, t3 = tokens
         
         # uniformly sample the input by potentially forcing equality
-        if random.random() < 0.5:  # force t2 == t4 half the time
-            t2 = t4
-        if random.random() < 0.5:  # force t0 == t5 half the time  
-            t0 = t5
-        if random.random() < 0.5:  # force t1 == t3 half the time
-            t1 = t3
+        if random.random() < 0.5:  # force t0 == t1 half the time
+            t1 = t0
+        if random.random() < 0.5:  # force t2 == t3 half the time  
+            t3 = t2
+        if random.random() < 0.5:  # force t0 == t3 half the time
+            t3 = t0
         
         # Update tokens list with potentially modified values
-        final_tokens = [t0, t1, t2, t3, t4, t5]
+        final_tokens = [t0, t1, t2, t3]
         
-        # logical ground truth: ((t2 != t4) and (t0 != t5)) or (t1 == t3)
-        gt = (t2 != t4) or (t0 != t5) and (t1 == t3)
-        examples.append(({f"t{i}": final_tokens[i] for i in range(6)}, gt))
+        # logical ground truth: (t0 != t1) or (t2 != t3) and (t0 == t3)
+        # Python precedence: (t0 != t1) or ((t2 != t3) and (t0 == t3))
+        gt = (t0 != t1) or (t2 != t3) and (t0 == t3)
+        examples.append(({f"t{i}": final_tokens[i] for i in range(4)}, gt))
     return examples
 
 def generate_examples2(n: int):
@@ -411,7 +420,7 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
         load_source,
         token=auth_token,
         dtype=torch.bfloat16,
-        device_map={"": 1},  # Use only GPU 1 "auto"
+        device_map={"": 0},  # Use only GPU 1 "auto"
     )
 
     if not use_local and local_dir:
