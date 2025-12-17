@@ -9,115 +9,65 @@ import torch
 from tqdm import tqdm
 
 PROMPT_TEMPLATE1 = (
-    "Task: Evaluate the Python expression and return the result.\n\n"
-    "Examples:\n"
+    "Task: Evaluate the following Python expression and return the result.\n\n"
+    "Example of equal and not equal comparisons:\n"
+    " 'a' == 'a' → true\n"
+    " 'a' == 'b' → false\n"
+    " 'a' != 'b' → true\n"
+    " 'x' != 'x' → false\n"
     "Logic function: \n\n"
-    "def logic_function1(t0, t1, t2, t3):\n"
-    "    return (t0 or t1) and (t2 and t3)\n\n"
-    "logic_function1(True, True, False, True)=false\n"
-    "logic_function1(False, True, True, True)=true\n"
-    "logic_function1(True, False, True, False)=false\n"
-    "Now we have a different logic function to evaluate. Return only 'true' or 'false' (lowercase, no punctuation). Don't use step by step reasoning or any additional text.\n\n"
-    "def logic_function2(t0,t1,t2,t3):\n"
-    "    return (t0 or t1) and t2 or t3\n\n"
-    "Please evaluate: logic_function2({t0},{t1},{t2},{t3})="
+    "def logic_function(t0, t1, t2, t3):\n"
+    "    return (t0 != t1) or (t2 != t3) and (t0 == t3)\n\n"
+    "Examples:\n"
+    "logic_function(t0='a', t1='b', t2='c', t3='d') → true\n"
+    "logic_function(t0='x', t1='x', t2='y', t3='y') → false\n"
+    "logic_function(t0='r', t1='r', t2='g', t3='r') → true\n"
+    "logic_function(t0='m', t1='n', t2='o', t3='p') → true\n"
+    "logic_function(t0='q', t1='q', t2='q', t3='q') → false\n"
+    "Now evaluate the same logic function with new inputs. Return ONLY 'true' or 'false' (lowercase, no punctuation).\n\n"
+    "Please Evaluate: logic_function(t0='{t0}',t1='{t1}',t2='{t2}',t3='{t3}')="
 )
 
 SYSTEM_PROMPT = ("Provide your final answer as only the word true or false in lowercase. Do NOT use step-by-step reasoning or any additional text.")
 
 
-def build_vocabulary(tokenizer) -> List[str]:
-    """Return a richer list of token ids for sampling.
+# Global vocabulary: single ASCII letters (a-z, A-Z) and digits (0-9)
+VOCAB = list('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
-    Categories collected (all must be single-token encodings):
-      - ASCII letters (a-z, A-Z) of any length
-      - ASCII digits (0-9) of any length  
-      - Selected punctuation/operators: + - * / 
-      - Alphanumeric strings of any reasonable length (up to 20 chars)
-
-    Exclusions:
-      - Tokens that decode to 'true' or 'false' (to avoid answer leakage)
-      - Tokens containing whitespace or non-ascii characters
-      - Tokens that include internal special token markers
-
-    The function includes strings of various lengths to provide a richer vocabulary.
+def build_vocabulary(tokenizer=None) -> List[str]:
+    """Return a list of single-character tokens for sampling.
+    
+    Returns:
+        List of single ASCII letters (a-z, A-Z) and digits (0-9)
     """
-    vocab_size = getattr(tokenizer, "vocab_size", None)
-    if vocab_size is None:
-        vocab = tokenizer.get_vocab()
-        vocab_size = max(vocab.values()) + 1
-
-    valid_vocabulary: List[str] = []
-
-    allowed_punct = set(["+", "-", "*", "/"])
-    excluded_words = {"true", "false", "="}
-
-    for idx in range(vocab_size):
-        try:
-            token = tokenizer.convert_ids_to_tokens(idx)
-            # Quick reject for special tokens containing brackets or angle markers
-            if any(mark in token for mark in ["<", ">", "[", "]"]):
-                continue
-            enc = tokenizer.encode(token, add_special_tokens=False)
-            if len(enc) != 1:
-                continue  # must correspond to a single token
-            decoded = tokenizer.decode([idx], clean_up_tokenization_spaces=False).strip()
-            if not decoded or not decoded.isascii():
-                continue
-            if any(ch.isspace() for ch in decoded):
-                continue
-            lower_decoded = decoded.lower()
-            if lower_decoded in excluded_words:
-                continue
-
-            # Accept strings up to reasonable length (20 chars)
-            if len(decoded) > 20:
-                continue
-
-            # Categorize and accept various types of tokens
-            is_valid = False
-            
-            # Accept alphabetic strings of any length
-            if decoded.isalpha():
-                is_valid = True
-            # Accept numeric strings of any length  
-            elif decoded.isdigit():
-                is_valid = True
-            # Accept single character punctuation
-            elif len(decoded) == 1 and decoded in allowed_punct:
-                is_valid = True
-            # Accept alphanumeric strings of any length
-            elif all(ch.isalnum() for ch in decoded):
-                is_valid = True
-            
-            if is_valid:
-                valid_vocabulary.append(decoded)
-                
-        except Exception:
-            continue
-
-    return valid_vocabulary
+    return VOCAB
 
 def build_causal_model(model_type = 'or_model'):
     '''Build a causal model based on the specified model type. 
     The function returns a CausalModel object. 
-    task: (op1 and op2) or op3'''
+    task: (t0 != t1) or (t2 != t3) and (t0 == t3)
+    Equivalent to: (t0 != t1) or ((t2 != t3) and (t0 == t3))
+    intermediate: op1 = t0 != t1, op2 = t2 != t3, op3 = t0 == t3, op4 = op2 and op3, op5 = op1 or op4 (final)'''
     if model_type == 'or_model':
-        variables = ["t0", "t1", "t2", "t3", "op1", "op2", "op3"]
-        reps = [True, False]
+        variables = ["t0", "t1", "t2", "t3", "op1", "op2", "op3", "op4", "op5"]
+        reps = VOCAB
         values = {variable: reps for variable in ["t0", "t1", "t2", "t3"]}
-        values["op1"] = [True, False]
-        values["op2"] = [True, False]
-        values["op3"] = [True, False]
+        values["op1"] = [True, False]  # t0 != t1
+        values["op2"] = [True, False]  # t2 != t3
+        values["op3"] = [True, False]  # t0 == t3
+        values["op4"] = [True, False]  # op2 and op3
+        values["op5"] = [True, False]  # op1 or op4 (final result)
 
         parents = {
             "t0": [],
             "t1": [],
             "t2": [],
             "t3": [],
-            "op1": ["t0", "t1"],
-            "op2": ["op1", "t2"],
-            "op3": ["op2", "t3"],
+            "op1": ["t0", "t1"],      # t0 != t1
+            "op2": ["t2", "t3"],      # t2 != t3
+            "op3": ["t0", "t3"],      # t0 == t3
+            "op4": ["op2", "op3"],    # op2 and op3
+            "op5": ["op1", "op4"],    # op1 or op4 (final)
         }
 
 
@@ -130,19 +80,23 @@ def build_causal_model(model_type = 'or_model'):
             "t1": FILLER,
             "t2": FILLER,
             "t3": FILLER,
-            "op1": lambda x, y:  x or y,
-            "op2": lambda x, y:  x and y,
-            "op3": lambda x, y: x or y,
+            "op1": lambda x, y: x != y,    # t0 != t1
+            "op2": lambda x, y: x != y,    # t2 != t3
+            "op3": lambda x, y: x == y,    # t0 == t3
+            "op4": lambda x, y: x and y,   # op2 and op3
+            "op5": lambda x, y: x or y,    # op1 or op4 (final)
         }
 
         pos = {
-            "t0": (.1,0),
-            "t1": (.3,0),
-            "t2": (.5,0),
-            "t3": (.7,0),
-            "op1": (.4,1),
-            "op2": (.6,1),
-            "op3": (.8,1),
+            "t0": (.1, 0),
+            "t1": (.3, 0),
+            "t2": (.5, 0),
+            "t3": (.7, 0),
+            "op1": (.2, 1),
+            "op2": (.6, 1),
+            "op3": (.4, 1),
+            "op4": (.5, 2),
+            "op5": (.35, 3),
         }
         causal_model = CausalModel(variables, values, parents, functions, pos=pos)
     else:
@@ -408,55 +362,111 @@ def corresponding_intervention(op:str):
 
 def make_counterfactual_dataset_exhaustive(causal_model, intervention:str, samplesize:int, source_code:str, base_code:str):
     """
-    Create counterfactual dataset based on specific source and base binary codes.
+    Create counterfactual dataset based on specific source and base binary codes for the 4-token logic:
+    (t0 != t1) or (t2 != t3) and (t0 == t3)
     
     Args:
         causal_model: The causal model
-        vocab: Vocabulary for token generation
-        source_code: 3-bit binary string (e.g., "FFF", "FFT")
-        base_code: 3-bit binary string (e.g., "FFF", "FFT") 
+        intervention: The intervention operation
         samplesize: Number of samples to generate
+        source_code: 5-bit binary string representing op1-op5 states (e.g., "FFFFF", "TFFFF")
+        base_code: 5-bit binary string representing op1-op5 states (e.g., "FFFFF", "TFFFF") 
+    
+    Causal structure:
+    - op1: t0 != t1
+    - op2: t2 != t3
+    - op3: t0 == t3
+    - op4: op2 and op3
+    - op5: op1 or op4 (final result)
     """
     dataset = []
     
-    # Convert binary codes to boolean values
-    # base_code: "FFF" -> p=False, q=False, r=False
-    # base_code: "FFT" -> p=False, q=False, r=True
-    # etc.
-    p = base_code[0] == 'T'  # First bit
-    q = base_code[1] == 'T'  # Second bit  
-    r = base_code[2] == 'T'  # Third bit
+    # Convert binary codes to boolean values for the 5 operations
+    # base_code[i] represents op(i+1)
+    op1_base = base_code[0] == 'T'  # t0 != t1
+    op2_base = base_code[1] == 'T'  # t2 != t3
+    op3_base = base_code[2] == 'T'  # t0 == t3
+    op4_base = base_code[3] == 'T'  # op2 and op3
+    op5_base = base_code[4] == 'T'  # op1 or op4 (final)
     
     # Same for source
-    ps = source_code[0] == 'T'
-    qs = source_code[1] == 'T'
-    rs = source_code[2] == 'T'
+    op1_src = source_code[0] == 'T'
+    op2_src = source_code[1] == 'T'
+    op3_src = source_code[2] == 'T'
+    op4_src = source_code[3] == 'T'
+    op5_src = source_code[4] == 'T'
     
     for _ in range(samplesize):
-        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        # Generate base tokens that satisfy the specified operation values
+        t0, t1, t2, t3 = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB)
 
-        if p == False:
-            t2 = t4
-        if q == False:
-            t0 = t5
-        if r == True:
-            t1 = t3
+        # Adjust tokens to match desired op values
+        # op1 = (t0 != t1)
+        if op1_base:
+            while t0 == t1:
+                t1 = random.choice(VOCAB)
+        else:
+            t1 = t0
         
-        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3, "t4": t4, "t5": t5}
+        # op2 = (t2 != t3)  
+        if op2_base:
+            while t2 == t3:
+                t3 = random.choice(VOCAB)
+        else:
+            t3 = t2
+            
+        # op3 = (t0 == t3)
+        if op3_base:
+            t3 = t0
+        else:
+            while t0 == t3:
+                t3 = random.choice(VOCAB)
+        
+        base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3}
+        
+        # Compute actual operation values
+        actual_op1 = t0 != t1
+        actual_op2 = t2 != t3
+        actual_op3 = t0 == t3
+        actual_op4 = actual_op2 and actual_op3
+        actual_op5 = actual_op1 or actual_op4
+        
         dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r, "op4": p and q, "op5": (p and q) or r}  
+        dp["base_labels"] = {"op1": actual_op1, "op2": actual_op2, "op3": actual_op3, "op4": actual_op4, "op5": actual_op5}
 
-        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
-        if ps == False:
-            t2s = t4s
-        if qs == False:
-            t0s = t5s
-        if rs == True:
-            t1s = t3s
+        # Generate source tokens
+        t0s, t1s, t2s, t3s = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB)
+        
+        # Adjust source tokens to match desired op values
+        if op1_src:
+            while t0s == t1s:
+                t1s = random.choice(VOCAB)
+        else:
+            t1s = t0s
+            
+        if op2_src:
+            while t2s == t3s:
+                t3s = random.choice(VOCAB)
+        else:
+            t3s = t2s
+            
+        if op3_src:
+            t3s = t0s
+        else:
+            while t0s == t3s:
+                t3s = random.choice(VOCAB)
 
-        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
+        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s}
+        
+        # Compute actual source operation values
+        actual_op1s = t0s != t1s
+        actual_op2s = t2s != t3s
+        actual_op3s = t0s == t3s
+        actual_op4s = actual_op2s and actual_op3s
+        actual_op5s = actual_op1s or actual_op4s
+        
         dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs, "op4": ps and qs, "op5": (ps and qs) or rs}]
+        dp["source_labels"] = [{"op1": actual_op1s, "op2": actual_op2s, "op3": actual_op3s, "op4": actual_op4s, "op5": actual_op5s}]
 
         intervened_id = base_id.copy()
         intervened_id[intervention] = dp["source_labels"][0][intervention]
@@ -525,38 +535,81 @@ def make_counterfactual_dataset_exhaustive2(causal_model, intervention:str, samp
     return dataset
 
 def make_counterfactual_dataset_all(causal_model, intervention:str, samplesize:int):
+    """Generate counterfactual dataset for the logic task:
+    (t0 != t1) or (t2 != t3) and (t0 == t3)
+    
+    Causal structure:
+    - op1: t0 != t1
+    - op2: t2 != t3
+    - op3: t0 == t3
+    - op4: op2 and op3
+    - op5: op1 or op4 (final result)
+    """
     dataset = []
     for _ in range(samplesize):
-        # truth values of ops all randomized
-        picks = [random.randint(0, 1) for _ in range(4)]
-        t0, t1, t2, t3 = [bool(p) for p in picks]
+        # Generate random tokens from vocabulary for t0-t3
+        t0 = random.choice(VOCAB)
+        t1 = random.choice(VOCAB)
+        t2 = random.choice(VOCAB)
+        t3 = random.choice(VOCAB)
 
-        p = t0 or t1
-        q = p and t2
-        r = q or t3
+        if random.random() < 0.5:
+            t1 = t0
+        if random.random() < 0.5:
+            t2 = t3
+        if random.random() < 0.5:
+            t3 = t0
+
+        # Compute intermediate operations
+        op1 = t0 != t1       # t0 != t1
+        op2 = t2 != t3       # t2 != t3
+        op3 = t0 == t3       # t0 == t3
+        op4 = op2 and op3    # op2 and op3
+        op5 = op1 or op4     # op1 or op4 (final result)
+        
         base_id = {"t0": t0, "t1": t1, "t2": t2, "t3": t3}
 
         dp = {"input_ids": base_id}
-        dp["base_labels"] = {"op1": p, "op2": q, "op3": r}
+        dp["base_labels"] = {"op1": op1, "op2": op2, "op3": op3, "op4": op4, "op5": op5}
         
-        picks = [random.randint(0, 1) for _ in range(4)]
-        t0s, t1s, t2s, t3s = [bool(p) for p in picks]
+        # Generate source inputs from vocabulary
+        t0s = random.choice(VOCAB) 
+        t1s = random.choice(VOCAB) 
+        t2s = random.choice(VOCAB)
+        t3s = random.choice(VOCAB) 
 
+        if intervention == "op1":
+            t1s = t1 if random.random() < 0.5 else t1s
+        if intervention == "op2":
+            t2s = t2 if random.random() < 0.5 else t2s
+        if intervention == "op3":
+            t3s = t3 if random.random() < 0.5 else t3s
 
+        if random.random() < 0.8:
+            t1s = t0s
+        if random.random() < 0.5:
+            t3s = t2s
+        if random.random() < 0.5:
+            t0s = t3s
 
-        source_id = {"t0": t0s,"t1": t1s, "t2": t2s, "t3": t3s}
-
-        ps, qs, rs = t0s or t1s, (t0s or t1s) and t2s, (t0s or t1s) and t2s or t3s
+        source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s}
+        # Compute source operations
+        op1s = t0s != t1s     # t0 != t1
+        op2s = t2s != t3s     # t2 != t3
+        op3s = t0s == t3s     # t0 == t3
+        op4s = op2s and op3s  # op2 and op3
+        op5s = op1s or op4s   # op1 or op4 (final result)
 
         dp["source_input_ids"] = [source_id]
-        dp["source_labels"] = [{"op1": ps, "op2": qs, "op3": rs}]
+        dp["source_labels"] = [{"op1": op1s, "op2": op2s, "op3": op3s, "op4": op4s, "op5": op5s}]
+        
         # Create intervened input by copying base_id and applying interventions
         intervened_id = base_id.copy()
         intervened_id[intervention] = dp["source_labels"][0][intervention]
         
         dp["intervened_input_ids"] = intervened_id
         dp["labels"] = causal_model.run_forward(intervened_id)
-        # content of dp: "input_ids" (t0 to t3), "base_labels" (op1 to op3), "source_input_ids" , "source_labels", "intervened_input_ids", "labels". 
+        # content of dp: "input_ids" (t0 to t3), "base_labels" (op1 to op5), "source_input_ids", "source_labels", "intervened_input_ids", "labels". 
         dataset.append(dp)
     return dataset
 
@@ -643,13 +696,17 @@ def make_counterfactual_dataset(
     else:
         raise ValueError("dataset_type should be one of ['fixed', 'average', 'fixed_f2t', 'all', 'exhaustive', 'exhaustive2']")
 
-    # vocab = build_vocabulary(tokenizer)
     dataset =  make_raw_data(equality_model, interv, data_size)
 
     dataset = data_filter(op_out, equality_model, model, tokenizer, dataset, device, batch_size=batch_size)
     print(f"The sample size of dataset is {len(dataset)}, batch size {batch_size}")
 
     data_tokenized = []
+
+    # count the proprtion of differnt intervenved labels and based labels
+    true_count = sum(1 for dp in dataset if dp["labels"][op_out] == dp["base_labels"][op_out])
+    print(f"Proportion of True labels in the dataset: {true_count}/{len(dataset)} = {true_count/len(dataset):.2f}")
+    
     for i in range(len(dataset)):
         dp = dataset[i]
 
@@ -671,6 +728,7 @@ def make_counterfactual_dataset(
                 "intervened_input_ids": tokenizer(intervened_texts, return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
                 "labels": tokenizer(str(dp["labels"][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
                 "source_labels": tokenizer(str(dp["source_labels"][0][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
+                "base_labels": tokenizer(str(dp["base_labels"][op_out]).lower(), return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device),
             }
         )
     

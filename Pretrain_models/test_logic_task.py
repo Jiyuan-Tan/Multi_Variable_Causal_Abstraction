@@ -185,7 +185,7 @@ def generate_examples(single_ids: List[int], tokenizer, n: int):
         if random.random() < 0.5:  # force t2 == t3 half the time  
             t3 = t2
         if random.random() < 0.5:  # force t0 == t3 half the time
-            t3 = t0
+            t0 = t3
         
         # Update tokens list with potentially modified values
         final_tokens = [t0, t1, t2, t3]

@@ -143,7 +143,7 @@ def set_random_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def find_positional_indices(sample_input_id, tokenizer, sub_token = 'check(', return_token_mapping=False):
+def find_positional_indices(sample_input_id, tokenizer, sub_token = 'logic_function(', return_token_mapping=False):
     ''' This function is used to find the positional indices of the first token in the input_ids after sub_token.
     This returns the position where {t0} appears in the formatted prompt.
     Input:
@@ -176,22 +176,16 @@ def find_positional_indices(sample_input_id, tokenizer, sub_token = 'check(', re
     # Find the last occurrence of the sub_token in the decoded text
     text_pos = full_text.rfind(sub_token)
     
-    # Find the position of '<|im_end|>' token
-    im_end_pos = len(input_ids)  # Default to length if not found
-    im_end_token_id = tokenizer.encode('<|im_end|>', add_special_tokens=False)
-    if len(im_end_token_id) == 1:
-        im_end_token_id = im_end_token_id[0]
-        for i in range(len(input_ids) - 1, -1, -1):  # Search from end
-            if input_ids[i].item() == im_end_token_id:
-                im_end_pos = i
-                break
+    # length of sequence
+    input_length = len(input_ids)  # Default to length if not found
+    
     
     if text_pos == -1:
         print(f"Warning: '{sub_token}' not found in decoded text")
         print(f"Decoded text: {full_text}")
         if return_token_mapping:
-            return -1, im_end_pos, token_mapping
-        return -1, im_end_pos
+            return -1, input_length, token_mapping
+        return -1, input_length
     
     # Now find which token position corresponds to the character position after sub_token
     target_char_pos = text_pos + len(sub_token)
@@ -214,10 +208,10 @@ def find_positional_indices(sample_input_id, tokenizer, sub_token = 'check(', re
     
     # print(f"Position of first argument (t0): {last_occurrence_pos}")
     if return_token_mapping:
-        return last_occurrence_pos, im_end_pos, token_mapping
-    return last_occurrence_pos, im_end_pos
+        return last_occurrence_pos, input_length, token_mapping
+    return last_occurrence_pos, input_length
 
-def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
+def DAS_training(intervenable, train_dataset, optimizer, pos, device, tokenizer=None, epochs = 10, batch_size = 64, gradient_accumulation_steps = 1):
     '''Main code for training the model with DAS intervention.
     Input:
         intervenable: the model with the intervention, pyvene.IntervenableModel
@@ -239,6 +233,10 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
     train_iterator = trange(0, int(epochs), desc="Epoch")  # create a progress bar for the epochs
     total_step = 0
     for epoch in train_iterator:
+        epoch_correct = 0
+        epoch_total = 0
+        epoch_loss_sum = 0.0
+        
         epoch_iterator = tqdm( # create a progress bar for the batches
             DataLoader(
                 train_dataset,
@@ -256,7 +254,7 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
             batch["input_ids"] = batch["input_ids"].squeeze(1).squeeze(1)
             batch["source_input_ids"] = batch["source_input_ids"].squeeze(1).squeeze(1)
             #print(batch["input_ids"].shape, batch["source_input_ids"].shape)
-            batch_size = batch["input_ids"].shape[0]
+            current_batch_size = batch["input_ids"].shape[0]
             for k, v in batch.items():
                 if v is not None and isinstance(v, torch.Tensor):
                     batch[k] = v.to(device)
@@ -269,42 +267,50 @@ def DAS_training(intervenable, train_dataset, optimizer, pos, device, epochs = 1
                 ],
                 {
                     "sources->base": (
-                        [[[pos]] * batch_size], [[[pos]] * batch_size],
+                        [[[pos]] * current_batch_size], [[[pos]] * current_batch_size],
                     )
                 },
                 subspaces=[
-                    [[0]] * batch_size,
+                    [[0]] * current_batch_size,
                 ],
             )
+
             # compute metrics
-            eval_metrics = compute_metrics(
-            counterfactual_outputs.logits[:,-1,:].argmax(dim=-1), batch["labels"].squeeze()
-            )
-         
+            preds = counterfactual_outputs.logits[:,-1,:].argmax(dim=-1)
+            labels = batch["labels"].squeeze()
+            
+
             # loss and backprop
             loss = compute_loss(
-                counterfactual_outputs.logits[:,-1,:], batch["labels"].squeeze()
+                counterfactual_outputs.logits[:,-1,:], labels
             )
+            
+            # Accumulate epoch stats
+            epoch_correct += (preds == labels).sum().item()
+            epoch_total += current_batch_size
+            epoch_loss_sum += loss.item() * current_batch_size
 
-            epoch_iterator.set_postfix(
-                {"loss": f"{loss.item():.4f}", "acc": f"{eval_metrics['accuracy']:.4f}"},
-                refresh=True
-            )
-
-            train_iterator.set_postfix(
-                {"loss": f"{loss.item():.4f}", "acc": f"{eval_metrics['accuracy']:.4f}"},
-                refresh=True
-            )
 
             if gradient_accumulation_steps > 1:
                 loss = loss / gradient_accumulation_steps
             loss.backward()
+            total_step += 1
 
+            # Step optimizer after accumulating enough gradients
             if total_step % gradient_accumulation_steps == 0:
                 optimizer.step()
                 intervenable.set_zero_grad()
-            total_step += 1
 
+        # Handle any remaining accumulated gradients at end of epoch
+        if total_step % gradient_accumulation_steps != 0:
+            optimizer.step()
+            intervenable.set_zero_grad()
+
+        # Show loss and accuracy for the epoch
+        train_iterator.set_postfix(
+            loss=epoch_loss_sum / epoch_total if epoch_total > 0 else 0,
+            accuracy=epoch_correct / epoch_total if epoch_total > 0 else 0,
+        )
         epoch_iterator.close()  # Close inner progress bar after each epoch
 
 def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervention_type = 'das', return_details = False):
@@ -393,13 +399,17 @@ def das_test(intervenable, pos, test_dataset, device, batch_size = 64, intervent
             
             if return_details:
                 # Track sample indices for this batch
-                start_idx = batch_idx * batch_size
-                sample_indices.extend(range(start_idx, start_idx + current_batch_size))
+                # If the batch contains 'idx' field, use it; otherwise fall back to sequential
+                if "idx" in batch:
+                    sample_indices.extend(batch["idx"].tolist())
+                else:
+                    start_idx = batch_idx * batch_size
+                    sample_indices.extend(range(start_idx, start_idx + current_batch_size))
             batch_idx += 1
    
     eval_labels = torch.cat(eval_labels)
     eval_preds = torch.cat(eval_preds)
-    acc = compute_metrics(eval_preds, eval_labels)["accuracy"]
+    acc = sum(eval_preds == eval_labels).item() / len(eval_labels)
     
     if return_details:
         # Compute per-sample correctness (binary: 1 if correct, 0 otherwise)
@@ -508,7 +518,8 @@ def find_candidate_alignments(
     device,
     n_candidates = 10,
     subspace_dimension = 1,
-    intervention_name = None
+    intervention_name = None,
+    tokenizer = None,
 ):
     ''' This function is used to find the candidate alignments for the intervention.
     Input: 
@@ -528,6 +539,10 @@ def find_candidate_alignments(
     train_dataset = dataset[:int(len(dataset) * 0.6)]
     test_dataset = dataset[int(len(dataset) * 0.6):]
 
+    # count proprtion of differnt intervenved labels and based labels
+    true_count = sum(1 for dp in test_dataset if dp["labels"] == dp["base_labels"])
+    print(f"Overall Proportion of True labels in the dataset: {true_count}/{len(test_dataset)} = {true_count/len(test_dataset):.2f}")
+
     # Create directory for partial results if it doesn't exist
     os.makedirs("results", exist_ok=True)
     
@@ -544,14 +559,14 @@ def find_candidate_alignments(
             optimizer_params = []
             for k, v in intervenable.interventions.items():
                 optimizer_params += [{"params": v.rotate_layer.parameters()}]
-            optimizer = torch.optim.Adam(optimizer_params, lr=0.001)
+            optimizer = torch.optim.Adam(optimizer_params, lr=0.001)  # Increased from 0.001 to 0.01
             # train the model
-            DAS_training(intervenable, train_dataset, optimizer, pos=pos, device=device, epochs=5, batch_size=batch_size)
+            DAS_training(intervenable, train_dataset, optimizer, pos=pos, device=device, epochs=5, batch_size=batch_size, tokenizer=tokenizer)  # Increased from 5 to 10 epochs
             # test the model
             intervenable.disable_model_gradients()
             acc = das_test(intervenable, pos, test_dataset, device=device, batch_size=batch_size)
             candidates[(layer, pos)] = acc
-            print(f"Layer {layer}, Position {pos}: Accuracy = {acc:.4f}")
+            print(f"Layer {layer}, Position {pos}: Test Accuracy = {acc:.4f}")
             
             # Take a safe snapshot of the rotate_layer state_dict so later in-place
             # changes to the intervenable don't mutate previously stored weights.
@@ -654,7 +669,7 @@ if __name__ == "__main__":
     mode_group.add_argument("--test", action="store_true", help="Run testing using precomputed weights and candidates")
     parser.add_argument("--model-id", type=str, default="Qwen/Qwen3-14B", help="HuggingFace model ID to use")
     parser.add_argument("--causal-model", choices=["1", "2"], default="1", help="Which causal model to use: 1 (default) or 2")
-    parser.add_argument("--intervention-type", type=str, default='das', help="Type of intervention to use (e.g., 'das')")
+    parser.add_argument("--intervention-type", type=str, choices = ["das", "vanilla"], default='das', help="Type of intervention to use (e.g., 'das')")
     parser.add_argument("--weights-path", type=str, default=None, help="Path to das weights (.pt) for test mode")
     parser.add_argument("--candidates-path", type=str, default=None, help="Path to candidates JSON for test mode")
     parser.add_argument("--data-size", type=int, default=1024, help="Number of examples to generate per dataset")
@@ -712,12 +727,12 @@ if __name__ == "__main__":
     num_layers = getattr(model.config, 'num_hidden_layers', getattr(model.config, 'n_layer', None))
     if num_layers is None:
         raise ValueError("Could not determine number of layers from model config")
-    layers = range(num_layers)
+    layers = range(num_layers)  # from last layer to first layer (excluding embedding layer 0)
 
     if args.causal_model == "1":
-        op_list = ["op1", "op2", "op3"]
+        op_list = ["op1", "op2", "op3", "op4", "op5"]
         data_generator = "all"
-        out_op = "op3"
+        out_op = "op5"
     elif args.causal_model == "2":
         op_list = ["op4a", "op5a"]
         data_generator = "all2"
@@ -748,17 +763,17 @@ if __name__ == "__main__":
             pos_after_sub_token, input_length, token_mapping = find_positional_indices(
                 sample_input_id=dataset[0]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='logic_function2(',
+                sub_token='logic_function(',
                 return_token_mapping=True
             )
             pos_after_sub_token2, input_length2 = find_positional_indices(
                 sample_input_id=dataset[1]["input_ids"],
                 tokenizer=tokenizer,
-                sub_token='logic_function2('
+                sub_token='logic_function('
             )
             if pos_after_sub_token != pos_after_sub_token2:
                 raise RuntimeError("The position after sub_token is not consistent across samples.")
-            poss = range(pos_after_sub_token+1, input_length)
+            poss = range(pos_after_sub_token+7, input_length)
             
             # Save the position-to-token mapping to a separate file
             os.makedirs("training_results", exist_ok=True)
@@ -766,7 +781,7 @@ if __name__ == "__main__":
             with open(token_mapping_file, "w") as f:
                 json.dump(token_mapping, f, indent=4)
             print(f"Position-to-token mapping saved to {token_mapping_file}")
-            print(f"Searching positions from {pos_after_sub_token+1} to {input_length-1} for intervention {intervention}")
+            print(f"Searching positions from {pos_after_sub_token+7} to {input_length-1} for intervention {intervention}")
 
             print(f"Dataset created for {intervention}")
             print(f"Finding candidates for {intervention}")
@@ -779,7 +794,8 @@ if __name__ == "__main__":
                 device,
                 n_candidates=len(layers)*len(poss),
                 subspace_dimension=args.subspace_dimension,
-                intervention_name=intervention
+                intervention_name=intervention,
+                tokenizer=tokenizer
             )
             candidates_total[intervention].update(candidate)
             das_weights[intervention].update(weight)
@@ -842,19 +858,23 @@ if __name__ == "__main__":
                 )
                 print(f"Dataset created for {intervention}, source: {source_code}, base: {base_code}\r")
 
+                # Add idx field to each sample in dataset for proper tracking
+                for i, sample in enumerate(dataset):
+                    sample["idx"] = i
+
                 # Extract t0-t3 features from raw dataset
-                # For causal_model 1: t0, t1, t2, t3 are boolean
+                # For causal_model 1: t0, t1, t2, t3 are strings
                 # For causal_model 2: t0-t5 are from vocab (strings)
                 features_list = []
                 for dp in raw_dataset:
                     input_ids = dp["input_ids"]
                     if args.causal_model == "1":
-                        # For causal model 1, t0-t3 are boolean values
+                        # For causal model 1, t0-t3 are string values
                         features = {
-                            "t0": int(input_ids["t0"]) if isinstance(input_ids["t0"], bool) else input_ids["t0"],
-                            "t1": int(input_ids["t1"]) if isinstance(input_ids["t1"], bool) else input_ids["t1"],
-                            "t2": int(input_ids["t2"]) if isinstance(input_ids["t2"], bool) else input_ids["t2"],
-                            "t3": int(input_ids["t3"]) if isinstance(input_ids["t3"], bool) else input_ids["t3"],
+                            "t0": str(input_ids["t0"]),
+                            "t1": str(input_ids["t1"]),
+                            "t2": str(input_ids["t2"]),
+                            "t3": str(input_ids["t3"]),
                         }
                     else:
                         # For causal model 2, t0-t5 are strings (from vocab)
@@ -902,7 +922,7 @@ if __name__ == "__main__":
                     # Create analysis dataset for this (pos, layer) combination
                     # Features: t0, t1, t2, t3 (and t4, t5 for causal model 2)
                     # Label: binary (1 if eval_labels == pred_label, 0 otherwise)
-                    # Use indices to align features with labels (in case some samples were dropped)
+                    # Use indices from details to align features with results
                     aligned_features = [features_list[i] for i in details["indices"]]
                     analysis_datasets[intervention][source_base_key][candidate] = {
                         "features": aligned_features,
