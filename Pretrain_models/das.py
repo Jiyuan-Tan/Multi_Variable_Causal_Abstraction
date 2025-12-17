@@ -579,10 +579,10 @@ def find_candidate_alignments(
             
             # Use intervention_name in filename to avoid overwriting results from different ops
             suffix = f"_{intervention_name}" if intervention_name else ""
-            with open(f"results/candidates_partial{suffix}.json", "w") as f:
+            with open(f"results/candidates_partial{suffix}_{subspace_dimension}_pretrain.json", "w") as f:
                 json.dump(partial_candidates, f, indent=4)
             
-            torch.save(partial_weights, f"results/weights_partial{suffix}.pt")
+            torch.save(partial_weights, f"results/weights_partial{suffix}_{subspace_dimension}_pretrain.pt")
             print(f"Partial results saved ({current_iteration}/{total_iterations} completed)")
 
     # sort the candidates by accuracy
@@ -803,13 +803,13 @@ if __name__ == "__main__":
         # persist results
         os.makedirs("training_results", exist_ok=True)
         intervention_type = 'das'
-        with open(f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+        with open(f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json", "w") as f:
             json.dump(candidates_total, f, indent=4)
-        print(f"Candidate alignments saved to training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
+        print(f"Candidate alignments saved to training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json")
 
-        with open(f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt", "wb") as f:
+        with open(f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt", "wb") as f:
             torch.save(das_weights, f)
-        print(f"DAS weights saved to training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt")
+        print(f"DAS weights saved to training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt")
 
     elif args.test:
         print("Starting testing using provided weights and candidates")
