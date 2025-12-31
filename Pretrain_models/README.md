@@ -1,34 +1,188 @@
-# Llama 8B local test
+# Causal Abstraction & Distributed Alignment Search (DAS)
 
-This folder contains a script to download a Llama-8B-style model from Hugging Face, load it locally (on an A100 with 8-bit/bitsandbytes if available), run a synthetic logical token-equality task, and report accuracy.
+This folder contains tools for studying causal abstraction in language models using Distributed Alignment Search (DAS) and related techniques.
 
-Quick steps (PowerShell):
+## Overview
 
-1. Install dependencies (recommended in a virtual env):
+The codebase implements:
+- **Standard DAS**: Learns fixed-dimension orthogonal subspaces for causal intervention
+- **Boundless DAS**: Automatically selects relevant feature dimensions via learnable masks
+- **Vanilla Intervention**: Full activation patching without subspace projection
+- **Logic Task Evaluation**: Test LLM reasoning on boolean logic expressions
 
-```powershell
-python -m pip install -r Llama8b/requirements.txt
+## Files
+
+| File | Description |
+|------|-------------|
+| `das.py` | Main script for DAS training and testing with multiple intervention types |
+| `boundless_das.py` | Boundless DAS implementation with per-feature mask learning |
+| `test_logic_task.py` | Standalone script to evaluate LLM accuracy on logic tasks |
+| `util_data.py` | Dataset generation, causal model construction, and counterfactual sampling |
+| `util_model.py` | Model loading utilities with multi-GPU support |
+
+## Installation
+
+```bash
+pip install torch transformers pyvene tqdm numpy
 ```
 
-2. Set your Hugging Face token if the model requires authentication:
+## Logic Task
 
-```powershell
-$env:HF_TOKEN = "<your_hf_token>"
+The primary task is evaluating the expression:
+```python
+(t0 != t1) or ((t2 != t3) and (t0 == t3))
 ```
 
-3. Run the test script (example using Llama-2 8B chat model as a placeholder):
+**Causal structure:**
+- `op1`: t0 != t1
+- `op2`: t2 != t3  
+- `op3`: t0 == t3
+- `op4`: op2 and op3
+- `op5`: op1 or op4 (final result)
 
-```powershell
-python Llama8b/run_test.py --model-id "meta-llama/Llama-2-8b-chat-hf" --num-examples 200
+## Usage
+
+### 1. Test Model Accuracy on Logic Task
+
+```bash
+# Basic test
+python test_logic_task.py --model-id Qwen/Qwen3-14B --num-examples 200
+
+# With local model cache
+python test_logic_task.py --model-id Qwen/Qwen3-14B --num-examples 200 \
+    --local-model-dir ./model --batch-size 16
+
+# Different prompt versions (1-5 available)
+python test_logic_task.py --prompt-version 3  # Boolean logic
+python test_logic_task.py --prompt-version 4  # Integer comparison
+python test_logic_task.py --prompt-version 5  # Contains letter 'a'
 ```
 
-Notes:
-- The default `--model-id` is `meta-llama/Llama-2-8b-chat-hf`. Replace with the exact Llama-8B instruct repo id you want.
-- The script tries to load the model in 8-bit mode using `bitsandbytes`. If that fails it falls back to fp16.
-- The logical task used by the script is: ((t2 != t4) and (t0 != t5)) or (t1 == t3). Tokens t0..t5 are sampled from the model vocabulary (single-token entries).
-- Results will be printed to stdout including accuracy.
+### 2. Train DAS Interventions
 
-If you'd like, I can:
-- Change the logical expression to match a different spec
-- Add saving of the raw predictions and examples to JSON
-- Add a small unit test harness or batching for faster inference
+#### Standard DAS (fixed subspace dimension)
+```bash
+# Single GPU
+python das.py --train --intervention-type das \
+    --hf-cache-dir /path/to/.hf_cache \
+    --batch-size 8 \
+    --subspace-dimension 1
+
+# Multi-GPU
+python das.py --train --intervention-type das \
+    --hf-cache-dir /path/to/.hf_cache \
+    --batch-size 32 --num-gpus 8
+```
+
+#### Boundless DAS (automatic feature selection)
+```bash
+# Single GPU
+python das.py --train --intervention-type boundless \
+    --hf-cache-dir /path/to/.hf_cache \
+    --batch-size 8 \
+    --sparsity-coef 0.01
+
+# Multi-GPU with custom temperature annealing
+python das.py --train --intervention-type boundless \
+    --hf-cache-dir /path/to/.hf_cache \
+    --batch-size 32 --num-gpus 8 \
+    --temperature-start 1.0 --temperature-end 0.01
+```
+
+#### Vanilla Intervention (full activation patching)
+```bash
+python das.py --train --intervention-type vanilla \
+    --hf-cache-dir /path/to/.hf_cache \
+    --batch-size 8
+```
+
+### 3. Test Pre-trained Interventions
+
+```bash
+# Test with saved weights
+python das.py --test --intervention-type das \
+    --weights-path training_results/das_weights_das_or_model_1_dim1.pt \
+    --candidates-path training_results/candidates_das_or_model_1_dim1.json
+
+# Test boundless DAS
+python das.py --test --intervention-type boundless \
+    --weights-path training_results/das_weights_boundless_or_model_1.pt \
+    --candidates-path training_results/candidates_boundless_or_model_1.json
+```
+
+## Command-Line Arguments
+
+### das.py
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--train` / `--test` | Required | Training or testing mode |
+| `--model-id` | `Qwen/Qwen3-14B` | HuggingFace model ID |
+| `--intervention-type` | `das` | Type: `das`, `vanilla`, or `boundless` |
+| `--causal-model` | `1` | Causal model variant (1 or 2) |
+| `--subspace-dimension` | `1` | Subspace dimension for standard DAS |
+| `--sparsity-coef` | `0.01` | L1 sparsity coefficient for boundless DAS |
+| `--temperature-start` | `1.0` | Starting temperature for mask annealing |
+| `--temperature-end` | `0.01` | Ending temperature for mask annealing |
+| `--batch-size` | `32` | Batch size |
+| `--data-size` | `1024` | Number of examples per dataset |
+| `--num-gpus` | `1` | Number of GPUs (-1 for auto, 0 for CPU) |
+| `--seed` | `42` | Random seed |
+| `--hf-cache-dir` | None | HuggingFace cache directory |
+
+### test_logic_task.py
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--model-id` | `meta-llama/Llama-3.1-8B-Instruct` | HuggingFace model ID |
+| `--num-examples` | `200` | Number of test examples |
+| `--prompt-version` | `1` | Prompt template (1-5) |
+| `--batch-size` | `16` | Batch size for generation |
+| `--seed` | `42` | Random seed |
+| `--local-model-dir` | None | Local model cache directory |
+
+## Output Files
+
+### Training
+- `training_results/candidates_{type}_{model}_dim{d}.json` - Accuracy scores per (layer, position)
+- `training_results/das_weights_{type}_{model}_dim{d}.pt` - Trained intervention weights
+- `training_results/feature_counts_boundless_{model}.json` - Selected feature counts (boundless only)
+- `training_results/position_token_mapping_{op}_{model}.json` - Token position mappings
+
+### Testing
+- `test_results/test_results_{type}_{model}.json` - Test accuracy per candidate
+- `test_results/analysis_datasets_{type}_{model}.json` - Per-sample features and correctness
+
+## Intervention Types Comparison
+
+| Type | Description | Parameters | Use Case |
+|------|-------------|------------|----------|
+| **Standard DAS** | Fixed-dimension orthogonal rotation | Subspace dimension (e.g., 1D) | When you expect a low-dimensional causal variable |
+| **Boundless DAS** | Learnable per-feature masks with sparsity | Sparsity coefficient, temperature | When the relevant subspace dimension is unknown |
+| **Vanilla** | Full activation interchange | None | Baseline comparison, upper bound on intervention effect |
+
+## Causal Models
+
+### Model 1 (default)
+Task: `(t0 != t1) or ((t2 != t3) and (t0 == t3))`
+- 4 input tokens: t0, t1, t2, t3
+- 5 intermediate operations: op1-op5
+
+### Model 2
+Task: `((t2 != t4) or (t1 == t3)) and ((t0 != t5) or (t1 == t3))`
+- 6 input tokens: t0-t5
+- 6 operations: op1a-op6a
+
+## Tips
+
+1. **Memory**: Use `--num-gpus` for model parallelism with large models
+2. **Speed**: Increase `--batch-size` when GPU memory allows
+3. **Reproducibility**: Set `--seed` for consistent results
+4. **Boundless DAS**: Tune `--sparsity-coef` (higher = sparser feature selection)
+5. **Cache**: Use `--hf-cache-dir` to avoid re-downloading models
+
+## References
+
+- [pyvene](https://github.com/stanfordnlp/pyvene) - Neural Network Intervention Library
+- [Causal Abstraction](https://arxiv.org/abs/2301.04709) - Theoretical Framework
+- [Distributed Alignment Search](https://arxiv.org/abs/2303.02536) - DAS Method
