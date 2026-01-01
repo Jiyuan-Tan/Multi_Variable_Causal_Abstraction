@@ -370,6 +370,25 @@ def main():
     print(f"Step 2: Generating dataset with {args.num_groups} groups...")
     dataset = create_dataset_with_n_groups(config, args.num_groups, args.size)
     print(f"  Generated {len(dataset)} examples")
+    
+    # Save partial result: raw dataset
+    raw_dataset_path = output_dir / "raw_dataset"
+    dataset.dataset.save_to_disk(str(raw_dataset_path))
+    print(f"  Saved raw dataset to {raw_dataset_path}")
+    
+    # Save partial summary
+    partial_summary = {
+        "model": args.model,
+        "device": device,
+        "num_groups": args.num_groups,
+        "entities_per_group": 3,
+        "dataset_size": args.size,
+        "raw_dataset_size": len(dataset),
+        "step": "dataset_generated"
+    }
+    partial_summary_path = output_dir / "partial_summary.json"
+    with open(partial_summary_path, "w") as f:
+        json.dump(partial_summary, f, indent=2)
     print()
     
     # Show example
@@ -408,9 +427,30 @@ def main():
             batch_size=args.batch_size,
             verbose=True
         )
+        
+        # Save partial result: filtered dataset
+        filtered_dataset_path = output_dir / "filtered_dataset"
+        filtered_dataset.dataset.save_to_disk(str(filtered_dataset_path))
+        print(f"  Saved filtered dataset to {filtered_dataset_path}")
+        
+        # Update partial summary
+        partial_summary.update({
+            "filter_stats": filter_stats,
+            "filtered_dataset_size": len(filtered_dataset),
+            "step": "dataset_filtered"
+        })
+        with open(partial_summary_path, "w") as f:
+            json.dump(partial_summary, f, indent=2)
         print()
     except ValueError as e:
         print(f"\n❌ Error: {e}")
+        # Save error state to partial summary
+        partial_summary.update({
+            "error": str(e),
+            "step": "filtering_failed"
+        })
+        with open(partial_summary_path, "w") as f:
+            json.dump(partial_summary, f, indent=2)
         return 1
     
     # Step 5: Split into train/test (80/20)
@@ -437,10 +477,32 @@ def main():
     train_dataset.dataset.save_to_disk(str(train_path))
     test_dataset.dataset.save_to_disk(str(test_path))
     print(f"  Saved datasets to {output_dir}")
+    
+    # Update partial summary
+    partial_summary.update({
+        "train_size": len(train_dataset),
+        "test_size": len(test_dataset),
+        "step": "train_test_split"
+    })
+    with open(partial_summary_path, "w") as f:
+        json.dump(partial_summary, f, indent=2)
     print()
     
     # Step 6: Setup for boundless DAS
     print("Step 6: Setting up Boundless DAS...")
+    
+    # Training configuration (needed for saving config)
+    train_config = {
+        "train_batch_size": args.batch_size,
+        "evaluation_batch_size": args.batch_size,
+        "training_epoch": 10,
+        "init_lr": 0.001,
+        "masking": {
+            "regularization_coefficient": 0.01,
+            "temperature_annealing_fraction": 0.5,
+            "temperature_schedule": (1.0, 0.001),
+        },
+    }
     
     # Create token position (last token)
     def last_token_indexer(input_dict, is_original=True):
@@ -468,6 +530,29 @@ def main():
     print(f"  Created targets for {len(residual_targets_by_layer)} layers")
     print(f"  Token position: last_token")
     print(f"  Target variable: positional_query_group")
+    
+    # Save partial result: DAS configuration
+    das_config = {
+        "num_layers": num_layers,
+        "layers": layers,
+        "token_position": "last_token",
+        "target_variable": "positional_query_group",
+        "n_features": args.n_features,
+        "train_config": train_config
+    }
+    das_config_path = output_dir / "das_config.json"
+    with open(das_config_path, "w") as f:
+        json.dump(das_config, f, indent=2)
+    print(f"  Saved DAS configuration to {das_config_path}")
+    
+    # Update partial summary
+    partial_summary.update({
+        "num_layers": num_layers,
+        "n_features": args.n_features,
+        "step": "das_setup_complete"
+    })
+    with open(partial_summary_path, "w") as f:
+        json.dump(partial_summary, f, indent=2)
     print()
     
     # Step 7: Run boundless DAS
@@ -475,21 +560,16 @@ def main():
     print("  This may take a while depending on model size and dataset size...")
     print()
     
-    # Training configuration
-    train_config = {
-        "train_batch_size": args.batch_size,
-        "evaluation_batch_size": args.batch_size,
-        "training_epoch": 10,
-        "init_lr": 0.001,
-        "masking": {
-            "regularization_coefficient": 0.01,
-            "temperature_annealing_fraction": 0.5,
-            "temperature_schedule": (1.0, 0.001),
-        },
-    }
-    
     das_output_dir = output_dir / "boundless_das"
     das_output_dir.mkdir(exist_ok=True)
+    
+    # Update partial summary before DAS training
+    partial_summary.update({
+        "step": "das_training_started",
+        "das_output_dir": str(das_output_dir)
+    })
+    with open(partial_summary_path, "w") as f:
+        json.dump(partial_summary, f, indent=2)
     
     try:
         result = train_boundless_DAS(
@@ -509,6 +589,20 @@ def main():
         
         print()
         print("✓ Boundless DAS training complete!")
+        print()
+        
+        # Update partial summary with IIA scores for each layer
+        partial_summary.update({
+            "step": "das_training_complete",
+            "best_layer": result["metadata"]["best_layer"],
+            "best_test_score": result["metadata"]["best_test_score"],
+            "avg_test_score": result["metadata"]["avg_test_score"],
+            "test_scores_by_layer": result["test_scores"],  # IIA accuracy for each layer
+            "train_scores_by_layer": result["train_scores"],
+        })
+        with open(partial_summary_path, "w") as f:
+            json.dump(partial_summary, f, indent=2)
+        print(f"  Updated partial_summary.json with IIA scores for all layers")
         print()
         
         # Step 8: Save results summary
@@ -590,6 +684,66 @@ def main():
         print(f"\n❌ Error during Boundless DAS training: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Try to load any partial results from DAS output directory
+        test_scores_path = das_output_dir / "test_eval" / "scores.json"
+        train_scores_path = das_output_dir / "train_eval" / "scores.json"
+        
+        partial_test_scores = {}
+        partial_train_scores = {}
+        
+        if test_scores_path.exists():
+            try:
+                with open(test_scores_path, "r") as f:
+                    scores_dict = json.load(f)
+                # Convert string keys back to layer numbers
+                # Keys are like "(0,)" or "0" depending on format
+                for key_str, score in scores_dict.items():
+                    try:
+                        # Try to parse as tuple string like "(0,)"
+                        if key_str.startswith("(") and key_str.endswith(")"):
+                            layer = int(key_str.strip("()").split(",")[0])
+                        else:
+                            layer = int(key_str)
+                        partial_test_scores[layer] = score
+                    except (ValueError, IndexError):
+                        pass
+                print(f"  Loaded partial test scores from {test_scores_path}")
+            except Exception as load_error:
+                print(f"  Warning: Could not load test scores: {load_error}")
+        
+        if train_scores_path.exists():
+            try:
+                with open(train_scores_path, "r") as f:
+                    scores_dict = json.load(f)
+                # Convert string keys back to layer numbers
+                for key_str, score in scores_dict.items():
+                    try:
+                        if key_str.startswith("(") and key_str.endswith(")"):
+                            layer = int(key_str.strip("()").split(",")[0])
+                        else:
+                            layer = int(key_str)
+                        partial_train_scores[layer] = score
+                    except (ValueError, IndexError):
+                        pass
+                print(f"  Loaded partial train scores from {train_scores_path}")
+            except Exception as load_error:
+                print(f"  Warning: Could not load train scores: {load_error}")
+        
+        # Save error state to partial summary, including any partial scores
+        partial_summary.update({
+            "error": str(e),
+            "error_traceback": traceback.format_exc(),
+            "step": "das_training_failed",
+            "partial_test_scores_by_layer": partial_test_scores if partial_test_scores else None,
+            "partial_train_scores_by_layer": partial_train_scores if partial_train_scores else None,
+        })
+        with open(partial_summary_path, "w") as f:
+            json.dump(partial_summary, f, indent=2)
+        print(f"\n  Partial results saved to: {output_dir}")
+        print(f"  Check partial_summary.json for progress details")
+        if partial_test_scores:
+            print(f"  Found IIA scores for {len(partial_test_scores)} layer(s): {sorted(partial_test_scores.keys())}")
         return 1
 
 
