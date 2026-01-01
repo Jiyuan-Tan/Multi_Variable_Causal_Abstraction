@@ -1,0 +1,308 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "input": {
+      "active_groups": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "answer_index": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "entities_per_group": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "entity_g0_e0": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g0_e1": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g0_e2": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g1_e0": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g1_e1": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g1_e2": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "entity_g2_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g2_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g2_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g3_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g3_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g3_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g4_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g4_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g4_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g5_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g5_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g5_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g6_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g6_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g6_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g7_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g7_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g7_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g8_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g8_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g8_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g9_e0": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g9_e1": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "entity_g9_e2": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "query_group": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "query_indices": {
+        "feature": {
+          "dtype": "int64",
+          "_type": "Value"
+        },
+        "_type": "Sequence"
+      },
+      "raw_input": {
+        "dtype": "string",
+        "_type": "Value"
+      }
+    },
+    "counterfactual_inputs": [
+      {
+        "active_groups": {
+          "dtype": "int64",
+          "_type": "Value"
+        },
+        "answer_index": {
+          "dtype": "int64",
+          "_type": "Value"
+        },
+        "entities_per_group": {
+          "dtype": "int64",
+          "_type": "Value"
+        },
+        "entity_g0_e0": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g0_e1": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g0_e2": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g1_e0": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g1_e1": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g1_e2": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "entity_g2_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g2_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g2_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g3_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g3_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g3_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g4_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g4_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g4_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g5_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g5_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g5_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g6_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g6_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g6_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g7_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g7_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g7_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g8_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g8_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g8_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g9_e0": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g9_e1": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "entity_g9_e2": {
+          "dtype": "null",
+          "_type": "Value"
+        },
+        "query_group": {
+          "dtype": "int64",
+          "_type": "Value"
+        },
+        "query_indices": {
+          "feature": {
+            "dtype": "int64",
+            "_type": "Value"
+          },
+          "_type": "Sequence"
+        },
+        "raw_input": {
+          "dtype": "string",
+          "_type": "Value"
+        }
+      }
+    ]
+  },
+  "homepage": "",
+  "license": ""
+}

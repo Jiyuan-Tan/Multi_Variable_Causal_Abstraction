@@ -13,8 +13,6 @@ PROMPT_TEMPLATE1 = (
     "Example of equal and not equal comparisons:\n"
     " 'a' == 'a' → true\n"
     " 'a' == 'b' → false\n"
-    " 'a' != 'b' → true\n"
-    " 'x' != 'x' → false\n"
     "Logic function: \n\n"
     "def logic_function(t0, t1, t2, t3):\n"
     "    return (t0 != t1) or (t2 != t3) and (t0 == t3)\n"
@@ -25,8 +23,6 @@ PROMPT_TEMPLATE1 = (
     "logic_function(t0='a', t1='b', t2='c', t3='d') → true\n"
     "logic_function(t0='x', t1='x', t2='y', t3='y') → false\n"
     "logic_function(t0='r', t1='r', t2='g', t3='r') → true\n"
-    "logic_function(t0='m', t1='n', t2='o', t3='p') → true\n"
-    "logic_function(t0='q', t1='q', t2='q', t3='q') → false\n"
     "Now evaluate the same logic function with new inputs. Return ONLY 'true' or 'false' (lowercase, no punctuation) .\n\n"
     "Please Evaluate: logic_function(t0='{t0}',t1='{t1}',t2='{t2}',t3='{t3}')="
 )
