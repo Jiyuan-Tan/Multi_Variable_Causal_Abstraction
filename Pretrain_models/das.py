@@ -2,6 +2,10 @@
 Shell command to run the script:
   Single GPU:  python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 8
   Multi GPU:   python das.py --train --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 32 --num-gpus 8
+  
+  Boundless DAS (auto-selects feature dimensions):
+  Single GPU:  python das.py --train --intervention-type boundless --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 8
+  Multi GPU:   python das.py --train --intervention-type boundless --hf-cache-dir /vision/u/puyinli/Multi_Variable_Causal_Abstraction/.hf_cache --batch-size 32 --num-gpus 8
 '''
 import os
 import sys
@@ -669,7 +673,7 @@ if __name__ == "__main__":
     mode_group.add_argument("--test", action="store_true", help="Run testing using precomputed weights and candidates")
     parser.add_argument("--model-id", type=str, default="Qwen/Qwen3-14B", help="HuggingFace model ID to use")
     parser.add_argument("--causal-model", choices=["1", "2"], default="1", help="Which causal model to use: 1 (default) or 2")
-    parser.add_argument("--intervention-type", type=str, choices = ["das", "vanilla"], default='das', help="Type of intervention to use (e.g., 'das')")
+    parser.add_argument("--intervention-type", type=str, choices=["das", "vanilla", "boundless"], default='das', help="Type of intervention: 'das' (fixed subspace), 'vanilla' (full vector), or 'boundless' (auto feature selection)")
     parser.add_argument("--weights-path", type=str, default=None, help="Path to das weights (.pt) for test mode")
     parser.add_argument("--candidates-path", type=str, default=None, help="Path to candidates JSON for test mode")
     parser.add_argument("--data-size", type=int, default=1024, help="Number of examples to generate per dataset")
@@ -680,6 +684,9 @@ if __name__ == "__main__":
     parser.add_argument("--local-model-dir", type=str, default=None, help="Directory to load/save model snapshot (speeds up subsequent runs)")
     parser.add_argument("--hf-cache-dir", type=str, default=None, help="HuggingFace cache directory (sets HF_HOME env var, must be set before imports)")
     parser.add_argument("--num-gpus", type=int, default=1, help="Number of GPUs to use for model parallelism (use -1 for auto, 0 for CPU)")
+    parser.add_argument("--sparsity-coef", type=float, default=0.01, help="Sparsity coefficient for boundless DAS L1 regularization")
+    parser.add_argument("--temperature-start", type=float, default=1.0, help="Starting temperature for boundless DAS mask annealing")
+    parser.add_argument("--temperature-end", type=float, default=0.01, help="Ending temperature for boundless DAS mask annealing")
     args = parser.parse_args()
 
     # Set random seed early for reproducibility
@@ -745,6 +752,14 @@ if __name__ == "__main__":
         print("Starting training (finding candidate alignments)")
         candidates_total = {}
         das_weights = {}
+        feature_counts_total = {}  # For boundless DAS
+
+        # Import boundless DAS if needed
+        if intervention_type == 'boundless':
+            from boundless_das import (
+                find_candidate_alignments_boundless,
+            )
+            print("Using Boundless DAS (auto feature selection)")
 
         for intervention in op_list:
             candidates_total[intervention] = {}
@@ -785,39 +800,92 @@ if __name__ == "__main__":
 
             print(f"Dataset created for {intervention}")
             print(f"Finding candidates for {intervention}")
-            candidate, weight = find_candidate_alignments(
-                model,
-                dataset,
-                poss,
-                layers,
-                batch_size,
-                device,
-                n_candidates=len(layers)*len(poss),
-                subspace_dimension=args.subspace_dimension,
-                intervention_name=intervention,
-                tokenizer=tokenizer
-            )
-            candidates_total[intervention].update(candidate)
-            das_weights[intervention].update(weight)
+            
+            if intervention_type == 'boundless':
+                # Use boundless DAS (auto feature selection)
+                candidate, weight, feature_counts = find_candidate_alignments_boundless(
+                    model,
+                    dataset,
+                    poss,
+                    layers,
+                    batch_size,
+                    device,
+                    n_candidates=len(layers)*len(poss),
+                    intervention_name=intervention,
+                    tokenizer=tokenizer,
+                    sparsity_coef=args.sparsity_coef,
+                    epochs=5,
+                )
+                candidates_total[intervention].update(candidate)
+                das_weights[intervention].update(weight)
+                feature_counts_total[intervention] = feature_counts
+            else:
+                # Use standard DAS (fixed subspace dimension)
+                candidate, weight = find_candidate_alignments(
+                    model,
+                    dataset,
+                    poss,
+                    layers,
+                    batch_size,
+                    device,
+                    n_candidates=len(layers)*len(poss),
+                    subspace_dimension=args.subspace_dimension,
+                    intervention_name=intervention,
+                    tokenizer=tokenizer
+                )
+                candidates_total[intervention].update(candidate)
+                das_weights[intervention].update(weight)
 
         # persist results
         os.makedirs("training_results", exist_ok=True)
-        intervention_type = 'das'
-        with open(f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json", "w") as f:
-            json.dump(candidates_total, f, indent=4)
-        print(f"Candidate alignments saved to training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json")
+        
+        if intervention_type == 'boundless':
+            # Save boundless DAS results
+            with open(f"training_results/candidates_boundless_{causal_model_tag}_pretrain.json", "w") as f:
+                json.dump(candidates_total, f, indent=4)
+            print(f"Candidate alignments saved to training_results/candidates_boundless_{causal_model_tag}_pretrain.json")
+            
+            with open(f"training_results/das_weights_boundless_{causal_model_tag}_pretrain.pt", "wb") as f:
+                torch.save(das_weights, f)
+            print(f"Boundless DAS weights saved to training_results/das_weights_boundless_{causal_model_tag}_pretrain.pt")
+            
+            with open(f"training_results/feature_counts_boundless_{causal_model_tag}_pretrain.json", "w") as f:
+                json.dump(feature_counts_total, f, indent=4)
+            print(f"Feature counts saved to training_results/feature_counts_boundless_{causal_model_tag}_pretrain.json")
+        else:
+            # Save standard DAS results
+            with open(f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json", "w") as f:
+                json.dump(candidates_total, f, indent=4)
+            print(f"Candidate alignments saved to training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json")
 
-        with open(f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt", "wb") as f:
-            torch.save(das_weights, f)
-        print(f"DAS weights saved to training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt")
+            with open(f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt", "wb") as f:
+                torch.save(das_weights, f)
+            print(f"DAS weights saved to training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt")
 
     elif args.test:
         print("Starting testing using provided weights and candidates")
+        
+        # Import boundless DAS if needed
+        if intervention_type == 'boundless':
+            from boundless_das import test_with_boundless_weights
+            print("Using Boundless DAS for testing")
+        
         if args.intervention_type == 'das':
             if not args.weights_path:
-                args.weights_path = f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.pt"
+                args.weights_path = f"training_results/das_weights_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.pt"
             if not args.candidates_path:
-                args.candidates_path = f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json"
+                args.candidates_path = f"training_results/candidates_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}_pretrain.json"
+
+            # load provided artifacts
+            das_weights = load_weight(args.weights_path)
+            with open(args.candidates_path, "r") as f:
+                candidates_total = json.load(f)
+        
+        elif args.intervention_type == 'boundless':
+            if not args.weights_path:
+                args.weights_path = f"training_results/das_weights_boundless_{causal_model_tag}_pretrain.pt"
+            if not args.candidates_path:
+                args.candidates_path = f"training_results/candidates_boundless_{causal_model_tag}_pretrain.json"
 
             # load provided artifacts
             das_weights = load_weight(args.weights_path)
@@ -904,18 +972,30 @@ if __name__ == "__main__":
                         continue
                     
                     # Get accuracy and detailed per-sample results
-                    acc, details = test_with_weights(
-                        model,
-                        layer,
-                        device,
-                        pos,
-                        dataset,
-                        batch_size=batch_size,
-                        intervention_type=intervention_type,
-                        weight=weight,
-                        subspace_dimension=args.subspace_dimension,
-                        return_details=True
-                    )
+                    if intervention_type == 'boundless':
+                        acc, details = test_with_boundless_weights(
+                            model,
+                            layer,
+                            device,
+                            pos,
+                            dataset,
+                            batch_size=batch_size,
+                            weight=weight,
+                            return_details=True
+                        )
+                    else:
+                        acc, details = test_with_weights(
+                            model,
+                            layer,
+                            device,
+                            pos,
+                            dataset,
+                            batch_size=batch_size,
+                            intervention_type=intervention_type,
+                            weight=weight,
+                            subspace_dimension=args.subspace_dimension,
+                            return_details=True
+                        )
                     print(f"Source: {source_code}, Base: {base_code}, Candidate: {candidate}, Accuracy: {acc:.4f} \r")
                     results[candidate] = acc
                     
@@ -941,15 +1021,20 @@ if __name__ == "__main__":
                 print(f"Partial test results saved after {intervention}")
 
         # Save final test results
-        with open(f"test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+        if intervention_type == 'boundless':
+            result_suffix = f"boundless_{causal_model_tag}"
+        else:
+            result_suffix = f"{intervention_type}_{causal_model_tag}_dim{subspace_dimension}"
+        
+        with open(f"test_results/test_results_{result_suffix}.json", "w") as f:
             json.dump(test_results, f, indent=4)
-        print(f"Final test results saved to test_results/test_results_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
+        print(f"Final test results saved to test_results/test_results_{result_suffix}.json")
         
         # Save analysis datasets to a single file
         # Convert to a format suitable for JSON serialization
-        with open(f"test_results/analysis_datasets_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json", "w") as f:
+        with open(f"test_results/analysis_datasets_{result_suffix}.json", "w") as f:
             json.dump(analysis_datasets, f, indent=4)
-        print(f"Analysis datasets saved to test_results/analysis_datasets_{intervention_type}_{causal_model_tag}_dim{subspace_dimension}.json")
+        print(f"Analysis datasets saved to test_results/analysis_datasets_{result_suffix}.json")
 
     # Release the GPU memory
     # For multi-GPU models with device_map, we can't simply call model.cpu()

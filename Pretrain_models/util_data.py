@@ -109,7 +109,7 @@ def build_causal_model2(model_type = 'or_model'):
     task: (op1a or op3a) and (op2a or op3a)'''
     if model_type == 'or_model':
         variables = ["t0", "t1", "t2", "t3", "t4", "t5", "op1a", "op2a", "op3a", "op4a", "op5a", "op6a"]
-        reps = vocab
+        reps = VOCAB
         values = {variable: reps for variable in ["t0", "t1", "t2", "t3", "t4", "t5"]}
         values["op1a"] = [True, False]
         values["op2a"] = [True, False]
@@ -501,7 +501,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, intervention:str, samp
     rs = source_code[2] == 'T'
     
     for _ in range(samplesize):
-        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        t0, t1, t2, t3, t4, t5 = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB) , random.choice(VOCAB)
 
         if p == False:
             t2 = t4
@@ -514,7 +514,7 @@ def make_counterfactual_dataset_exhaustive2(causal_model, intervention:str, samp
         dp = {"input_ids": base_id}
         dp["base_labels"] = {"op1a": p, "op2a": q, "op3a": r, "op4a": p or r, "op5a": q or r, "op6a": (p and q) or r}
 
-        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB) , random.choice(VOCAB)
         if ps == False:
             t2s = t4s
         if qs == False:
@@ -621,7 +621,7 @@ def make_counterfactual_dataset_all2(causal_model, intervention:str, samplesize:
         # OP3: FFT
         # OP4: TTF
         # OP5: TTF
-        t0, t1, t2, t3, t4, t5 = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        t0, t1, t2, t3, t4, t5 = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB) , random.choice(VOCAB)
         if random.random() < 0.5:
             t2 = t4
         if random.random() < 0.5:
@@ -636,15 +636,15 @@ def make_counterfactual_dataset_all2(causal_model, intervention:str, samplesize:
         dp["base_labels"] = {"op1a": p, "op2a": q, "op3a": r, "op4a": p or r, "op5a": q or r, "op6a": (p and q) or r}
         
         
-        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab), random.choice(vocab) , random.choice(vocab)
+        t0s, t1s, t2s, t3s, t4s, t5s = random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB), random.choice(VOCAB) , random.choice(VOCAB)
 
-        t5s = t5 if random.random() < 0.5 else random.choice(vocab)
-        t4s = t4 if random.random() < 0.5 else random.choice(vocab)
-        t3s = t3 if random.random() < 0.5 else random.choice(vocab)
+        t5s = t5 if random.random() < 0.5 else random.choice(VOCAB)
+        t4s = t4 if random.random() < 0.5 else random.choice(VOCAB)
+        t3s = t3 if random.random() < 0.5 else random.choice(VOCAB)
 
-        t5s = t0s if random.random() < 0.5 else random.choice(vocab)
-        t2s = t4s if random.random() < 0.5 else random.choice(vocab)
-        t1s = t3s if random.random() < 0.5 else random.choice(vocab)
+        t5s = t0s if random.random() < 0.5 else random.choice(VOCAB)
+        t2s = t4s if random.random() < 0.5 else random.choice(VOCAB)
+        t1s = t3s if random.random() < 0.5 else random.choice(VOCAB)
 
         source_id = {"t0": t0s, "t1": t1s, "t2": t2s, "t3": t3s, "t4": t4s, "t5": t5s}
 

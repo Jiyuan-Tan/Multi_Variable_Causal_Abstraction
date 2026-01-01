@@ -27,13 +27,15 @@ def get_model_and_tokenizer(model_id: str, hf_token: str | None, local_dir: str 
     # For decoder-only models, use left padding for correct generation alignment
     tokenizer.padding_side = "left"
 
-    if num_gpus > 1:
-        device_map = {f"model.layers.{i}": f"cuda:{i % num_gpus}" for i in range(32)}
+    if num_gpus > 1 or num_gpus == -1:
+        # Use "auto" for multi-GPU - transformers will automatically distribute layers
+        # This handles embed_tokens, lm_head, and all layers correctly
+        device_map = "auto"
     elif num_gpus == 1:
-        device_map = f"cuda:{0}"
+        device_map = "cuda:0"
     elif num_gpus == 0:
         device_map = "cpu"
-    elif num_gpus == -1:
+    else:
         device_map = "auto"
     
     model = transformers.AutoModelForCausalLM.from_pretrained(
