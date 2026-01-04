@@ -202,7 +202,7 @@ class LMPipeline(Pipeline):
                 # Convert to messages format and apply chat template
                 messages = [{"role": "user", "content": text}]
                 formatted = self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
                 )
                 processed_input.append(formatted)
             raw_input = processed_input
@@ -397,8 +397,8 @@ class LMPipeline(Pipeline):
         for batch in tqdm(
             base_dataloader,
             desc="Computing base outputs",
-            disable=not logger.isEnabledFor(logging.DEBUG),
-            leave=False,
+            unit="batch",
+            dynamic_ncols=True,
         ):
             with torch.no_grad():
                 # Reconstruct batch as list of dicts for pipeline.generate
@@ -447,8 +447,8 @@ class LMPipeline(Pipeline):
             for batch in tqdm(
                 cf_dataloader,
                 desc="Computing counterfactual outputs",
-                disable=not logger.isEnabledFor(logging.DEBUG),
-                leave=False,
+                unit="batch",
+                dynamic_ncols=True,
             ):
                 with torch.no_grad():
                     # Reconstruct batch as list of dicts

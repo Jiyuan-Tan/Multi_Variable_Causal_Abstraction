@@ -1,0 +1,66 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}"
+        },
+        {
+            "name": "Debug run_das.py (Quick Test - Minimal)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Entity_Binding/hypothesis_testing/run_das.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/Entity_Binding",
+            "args": [
+                "--model", "Qwen/Qwen3-8B",
+                "--test",
+                "--size", "8",
+                "--batch-size", "4",
+                "--num-groups", "5",
+                "--n-features", "16",
+                "--min-accuracy", "0.5",
+                "--gpu", "0",
+                "--output", "hypothesis_testing/outputs/debug_quick"
+            ],
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/Entity_Binding",
+                "PATH": "/home/jytan12/causal_abs_cs224n/causal_abs/bin:${env:PATH}",
+                "VIRTUAL_ENV": "/home/jytan12/causal_abs_cs224n/causal_abs",
+                "PYTHON": "/usr/bin/python3"
+            }
+        },
+        {
+            "name": "Debug run_das.py (Full Dataset)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Entity_Binding/hypothesis_testing/run_das.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/Entity_Binding",
+            "args": [
+                "--model", "Qwen/Qwen3-8B",
+                "--size", "1024",
+                "--batch-size", "16",
+                "--num-groups", "10",
+                "--gpu", "0",
+                "--min-accuracy", "0.75",
+                "--output", "hypothesis_testing/outputs/debug_small"
+            ],
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/Entity_Binding",
+                "PATH": "/home/jytan12/causal_abs_cs224n/causal_abs/bin:${env:PATH}",
+                "VIRTUAL_ENV": "/home/jytan12/causal_abs_cs224n/causal_abs",
+                "PYTHON": "/usr/bin/python3"
+            }
+        }
+    ]
+}

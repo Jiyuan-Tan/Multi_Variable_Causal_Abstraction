@@ -112,7 +112,7 @@ def create_custom_config() -> EntityBindingTaskConfig:
     ]
     
     # Add instruction wrapper for better performance
-    config.prompt_prefix = "We will ask a question about the following sentences.\n\n"
+    config.prompt_prefix = "We will ask a question about the following sentences. only return the answer, no other text.\n\n"
     config.statement_question_separator = "\n\n"
     config.prompt_suffix = "\nAnswer:"
     
@@ -403,9 +403,9 @@ def main():
     print(f"Step 3: Loading model {args.model}...")
     pipeline = LMPipeline(
         args.model,
-        max_new_tokens=5,
+        max_new_tokens=2,
         device=device,
-        max_length=512,
+        max_length=None,  # Use dynamic padding (pad to longest in batch) instead of fixed 512
     )
     pipeline.tokenizer.padding_side = "left"
     num_layers = pipeline.get_num_layers()

@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -15,13 +16,19 @@ def learn_hyperplane(
     random_state: int = 42,
     C: float = 1.0,
     max_iter: int = 1000,
-    normalize: bool = True
-) -> Tuple[LogisticRegression, StandardScaler, dict]:
+    normalize: bool = True,
+    model_type: str = 'logistic',
+    hidden_layer_sizes: Tuple[int, ...] = (100,),
+    learning_rate_init: float = 0.001,
+    alpha: float = 0.0001
+) -> Tuple[Union[LogisticRegression, MLPClassifier], StandardScaler, dict]:
     """
     Learn a hyperplane to separate binary labeled data (0 or 1).
     
-    This function uses Logistic Regression with L2 regularization to find an optimal
-    linear decision boundary (hyperplane) that separates the two classes. It's efficient for large datasets (~4000 samples) and provides interpretable results.
+    This function can use either Logistic Regression or a Neural Network to find an optimal
+    decision boundary (hyperplane) that separates the two classes. Logistic regression provides
+    a linear boundary and is more interpretable, while neural networks can learn non-linear
+    boundaries and may achieve better performance on complex datasets.
     
     Parameters:
     -----------
@@ -34,27 +41,36 @@ def learn_hyperplane(
     random_state : int, default=42
         Random seed for reproducibility
     C : float, default=1.0
-        Inverse of regularization strength. Smaller values = stronger regularization
+        Inverse of regularization strength for logistic regression. Smaller values = stronger regularization
     max_iter : int, default=1000
         Maximum number of iterations for the solver
     normalize : bool, default=True
         Whether to standardize features (recommended for numerical stability)
+    model_type : str, default='logistic'
+        Type of model to use: 'logistic' for Logistic Regression or 'neural_net' for Neural Network
+    hidden_layer_sizes : Tuple[int, ...], default=(100,)
+        Hidden layer sizes for neural network. Example: (100,) for single layer, (100, 50) for two layers
+    learning_rate_init : float, default=0.001
+        Initial learning rate for neural network optimizer
+    alpha : float, default=0.0001
+        L2 regularization parameter for neural network
     
     Returns:
     --------
-    model : LogisticRegression
-        Trained logistic regression model
+    model : LogisticRegression or MLPClassifier
+        Trained model (type depends on model_type parameter)
     scaler : StandardScaler or None
         Feature scaler (None if normalize=False)
     results : dict
         Dictionary containing:
         - 'train_accuracy': Training set accuracy
         - 'test_accuracy': Test set accuracy
-        - 'coefficients': Hyperplane coefficients (weights)
-        - 'intercept': Hyperplane intercept (bias)
+        - 'coefficients': Hyperplane coefficients (weights) - only for logistic regression
+        - 'intercept': Hyperplane intercept (bias) - only for logistic regression
         - 'n_features': Number of features
         - 'n_samples': Number of samples
         - 'class_distribution': Count of each class
+        - 'model_type': Type of model used ('logistic' or 'neural_net')
     
     Example:
     --------
@@ -110,17 +126,58 @@ def learn_hyperplane(
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
     
-    # Train logistic regression model
-    print(f"\nTraining logistic regression (C={C}, max_iter={max_iter})...")
-    model = LogisticRegression(
-        C=C,
-        max_iter=max_iter,
-        random_state=random_state,
-        solver='lbfgs',  # Efficient for medium datasets
-        penalty='l2'
-    )
-    
-    model.fit(X_train, y_train)
+    # Train model based on model_type
+    if model_type == 'logistic':
+        print(f"\nTraining logistic regression (C={C}, max_iter={max_iter})...")
+        model = LogisticRegression(
+            C=C,
+            max_iter=max_iter,
+            random_state=random_state,
+            solver='lbfgs',  # Efficient for medium datasets
+            penalty='l2'
+        )
+        model.fit(X_train, y_train)
+        
+        # Extract hyperplane parameters (only for logistic regression)
+        coefficients = model.coef_[0]  # Shape: (n_features,)
+        intercept = model.intercept_[0]  # Scalar
+        
+    elif model_type == 'neural_net':
+        print(f"\nTraining neural network (hidden_layers={hidden_layer_sizes}, max_iter={max_iter})...")
+        model = MLPClassifier(
+            hidden_layer_sizes=hidden_layer_sizes,
+            max_iter=max_iter,
+            random_state=random_state,
+            learning_rate_init=learning_rate_init,
+            alpha=alpha,
+            solver='adam',
+            activation='relu',
+            early_stopping=False,
+            verbose=False
+        )
+        model.fit(X_train, y_train)
+        
+        # For neural networks, we can't directly extract a single hyperplane
+        # but we can get the output layer weights as an approximation
+        # Note: This is only meaningful for single-output networks
+        if len(model.coefs_) > 0:
+            # Get weights from last layer (output layer)
+            output_weights = model.coefs_[-1]
+            output_bias = model.intercepts_[-1]
+            # For binary classification, we have one output neuron
+            if output_weights.shape[1] == 1:
+                coefficients = output_weights[:, 0]
+                intercept = output_bias[0]
+            else:
+                # If two outputs, use the difference
+                coefficients = output_weights[:, 1] - output_weights[:, 0]
+                intercept = output_bias[1] - output_bias[0]
+        else:
+            coefficients = None
+            intercept = None
+            
+    else:
+        raise ValueError(f"model_type must be 'logistic' or 'neural_net', got '{model_type}'")
     
     # Evaluate model
     train_accuracy = model.score(X_train, y_train)
@@ -130,13 +187,13 @@ def learn_hyperplane(
     print(f"  Training accuracy: {train_accuracy:.4f}")
     print(f"  Test accuracy: {test_accuracy:.4f}")
     
-    # Extract hyperplane parameters
-    coefficients = model.coef_[0]  # Shape: (n_features,)
-    intercept = model.intercept_[0]  # Scalar
-    
-    print(f"\nHyperplane equation:")
-    print(f"  Intercept (bias): {intercept:.4f}")
-    print(f"  Coefficients (weights): {coefficients}")
+    # Print hyperplane equation (only for logistic regression or if available)
+    if model_type == 'logistic' or coefficients is not None:
+        print(f"\nHyperplane equation:")
+        print(f"  Intercept (bias): {intercept:.4f}")
+        print(f"  Coefficients (weights): {coefficients}")
+    else:
+        print(f"\nNote: Neural network with multiple layers doesn't have a simple hyperplane representation.")
     
     # Prepare results dictionary
     results = {
@@ -147,14 +204,15 @@ def learn_hyperplane(
         'n_features': n_features,
         'n_samples': n_samples,
         'class_distribution': class_counts,
-        'feature_names': df.drop(columns=[label_col]).columns.tolist()
+        'feature_names': df.drop(columns=[label_col]).columns.tolist(),
+        'model_type': model_type
     }
     
     return model, scaler, results
 
 
 def predict_with_hyperplane(
-    model: LogisticRegression,
+    model: Union[LogisticRegression, MLPClassifier],
     X_new: pd.DataFrame,
     scaler: Optional[StandardScaler] = None
 ) -> np.ndarray:
@@ -163,7 +221,7 @@ def predict_with_hyperplane(
     
     Parameters:
     -----------
-    model : LogisticRegression
+    model : LogisticRegression or MLPClassifier
         Trained model from learn_hyperplane()
     X_new : pd.DataFrame
         New data to predict (features only, no label column)
@@ -184,7 +242,7 @@ def predict_with_hyperplane(
 
 
 def get_decision_scores(
-    model: LogisticRegression,
+    model: Union[LogisticRegression, MLPClassifier],
     X: pd.DataFrame,
     scaler: Optional[StandardScaler] = None
 ) -> np.ndarray:
@@ -196,7 +254,7 @@ def get_decision_scores(
     
     Parameters:
     -----------
-    model : LogisticRegression
+    model : LogisticRegression or MLPClassifier
         Trained model from learn_hyperplane()
     X : pd.DataFrame
         Data to score (features only)
@@ -213,7 +271,21 @@ def get_decision_scores(
     if scaler is not None:
         X_array = scaler.transform(X_array)
     
-    return model.decision_function(X_array)
+    # Both LogisticRegression and MLPClassifier have decision_function
+    # For MLPClassifier, we use predict_proba to get scores
+    if isinstance(model, MLPClassifier):
+        # Get probability of class 1, then convert to logit scale
+        proba = model.predict_proba(X_array)
+        if proba.shape[1] == 2:
+            # Binary classification: use logit of class 1 probability
+            scores = np.log(proba[:, 1] / (proba[:, 0] + 1e-10))
+        else:
+            # Use the probability of class 1 directly
+            scores = proba[:, 1] - 0.5
+    else:
+        scores = model.decision_function(X_array)
+    
+    return scores
 
 
 if __name__ == "__main__":
@@ -244,8 +316,11 @@ if __name__ == "__main__":
     
     print(f"\nGenerated synthetic dataset with {n_samples} samples and {n_features} features")
     
-    # Learn hyperplane
-    model, scaler, results = learn_hyperplane(df, label_col='label')
+    # Learn hyperplane with logistic regression
+    print("\n" + "=" * 60)
+    print("Example 1: Using Logistic Regression")
+    print("=" * 60)
+    model, scaler, results = learn_hyperplane(df, label_col='label', model_type='logistic')
     
     print("\n" + "=" * 60)
     print("Example: Making predictions on new data")
@@ -258,4 +333,27 @@ if __name__ == "__main__":
     
     print("\nPredictions on first 5 samples:")
     for i, (pred, score) in enumerate(zip(predictions, scores)):
+        print(f"  Sample {i}: Predicted class = {pred}, Decision score = {score:.3f}")
+    
+    # Learn hyperplane with neural network
+    print("\n" + "=" * 60)
+    print("Example 2: Using Neural Network")
+    print("=" * 60)
+    model_nn, scaler_nn, results_nn = learn_hyperplane(
+        df, 
+        label_col='label', 
+        model_type='neural_net',
+        hidden_layer_sizes=(100,),
+        max_iter=500
+    )
+    
+    print("\n" + "=" * 60)
+    print("Example: Making predictions with neural network")
+    print("=" * 60)
+    
+    predictions_nn = predict_with_hyperplane(model_nn, test_samples, scaler_nn)
+    scores_nn = get_decision_scores(model_nn, test_samples, scaler_nn)
+    
+    print("\nPredictions on first 5 samples:")
+    for i, (pred, score) in enumerate(zip(predictions_nn, scores_nn)):
         print(f"  Sample {i}: Predicted class = {pred}, Decision score = {score:.3f}")
