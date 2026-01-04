@@ -140,7 +140,9 @@ class LMPipeline(Pipeline):
                 self.model_or_name,
                 config=self._init_extra_kwargs.get("config"),
                 token=hf_token,
-            ).to(device=device, dtype=dtype)
+                device_map=device,  # Load directly to target device (or "auto" for multi-device)
+                low_cpu_mem_usage=True,  # Reduce memory usage during model loading
+            )
             if hasattr(self.model.config, "_attn_implementation"):
                 self.model.config._attn_implementation = "eager"
             if hasattr(self.model.config, "use_cache"):

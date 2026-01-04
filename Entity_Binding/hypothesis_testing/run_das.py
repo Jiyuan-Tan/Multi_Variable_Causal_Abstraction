@@ -12,10 +12,19 @@ This script:
 Usage:
     python run_das.py --model MODEL_ID [--gpu GPU_ID] [--size DATASET_SIZE]
     python run_das.py --model gpt2 --gpu 0 --size 1024
+    python run_das.py --model Qwen/Qwen3-8B --hf-cache-dir /path/to/.cache --gpu 0
 """
 
 import sys
 import os
+
+# Set HuggingFace cache directory BEFORE importing transformers
+# This must happen before any HuggingFace library is imported
+for i, arg in enumerate(sys.argv):
+    if arg == "--hf-cache-dir" and i + 1 < len(sys.argv):
+        os.environ["HF_HOME"] = sys.argv[i + 1]
+        print(f"Using HuggingFace cache directory: {sys.argv[i + 1]}")
+        break
 import argparse
 import torch
 import json
@@ -311,8 +320,19 @@ def main():
         default=None,
         help="Comma-separated list of layer numbers to test (e.g., '0,5,10' or '0-5'). If not specified, all layers are tested.",
     )
+    parser.add_argument(
+        "--hf-cache-dir",
+        type=str,
+        default=None,
+        help="HuggingFace cache directory (sets HF_HOME env var, must be set before imports)",
+    )
     
     args = parser.parse_args()
+    
+    # Set HF_HOME if provided (fallback for when argparse processes it)
+    if args.hf_cache_dir:
+        os.environ["HF_HOME"] = args.hf_cache_dir
+        print(f"Using HuggingFace cache directory: {args.hf_cache_dir}")
     
     # Test mode overrides
     if args.test:
@@ -423,6 +443,8 @@ def main():
     pipeline.tokenizer.padding_side = "left"
     num_layers = pipeline.get_num_layers()
     print(f"  Model loaded ({num_layers} layers)")
+    
+    # Layer info will be printed after validation in Step 6
     print()
     
     causal_model = create_positional_causal_model(config)
@@ -541,7 +563,6 @@ def main():
     else:
         layers = list(range(num_layers))
         print(f"  Testing all layers: {layers}")
-    
     residual_targets = build_residual_stream_targets(
         pipeline=pipeline,
         layers=layers,
@@ -559,6 +580,8 @@ def main():
     # Save partial result: DAS configuration
     das_config = {
         "num_layers": num_layers,
+        "layer_start": layers[0] if layers else 0,
+        "layer_end": layers[-1] + 1 if layers else num_layers,
         "layers": layers,
         "token_position": "last_token",
         "target_variable": "positional_query_group",
@@ -573,6 +596,8 @@ def main():
     # Update partial summary
     partial_summary.update({
         "num_layers": num_layers,
+        "layer_start": layers[0] if layers else 0,
+        "layer_end": layers[-1] + 1 if layers else num_layers,
         "n_features": args.n_features,
         "step": "das_setup_complete"
     })
@@ -643,6 +668,9 @@ def main():
             "train_size": len(train_dataset),
             "test_size": len(test_dataset),
             "num_layers": num_layers,
+            "layer_start": layers[0] if layers else 0,
+            "layer_end": layers[-1] + 1 if layers else num_layers,
+            "layers": layers,
             "n_features": args.n_features,
             "target_variable": "positional_query_group",
             "best_layer": result["metadata"]["best_layer"],

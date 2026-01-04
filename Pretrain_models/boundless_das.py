@@ -25,6 +25,25 @@ from pyvene import (
     IntervenableConfig,
 )
 import pyvene as pv
+from pyvene.models import modeling_utils
+
+# Monkey patch pyvene's gather_neurons to fix multi-GPU device mismatch
+# The issue: pyvene calls gather_neurons with device=self.get_device() which may
+# differ from tensor_input.device when using device_map="auto" on multi-GPU
+_original_gather_neurons = modeling_utils.gather_neurons
+
+def _patched_gather_neurons(tensor_input, unit, unit_locations_as_list, device=None):
+    """
+    Patched version of gather_neurons that always uses tensor_input.device.
+    This fixes the multi-GPU device mismatch issue where the caller passes
+    device=cuda:0 but tensor_input is on cuda:1.
+    """
+    # ALWAYS use tensor_input.device, ignore the passed device parameter
+    # This ensures torch.gather works correctly on multi-GPU setups
+    return _original_gather_neurons(tensor_input, unit, unit_locations_as_list, device=None)
+
+# Apply the monkey patch
+modeling_utils.gather_neurons = _patched_gather_neurons
 
 
 class BoundlessRotatedSpaceIntervention(pv.TrainableIntervention, pv.DistributedRepresentationIntervention):
@@ -169,14 +188,20 @@ def config_boundless_das(model, layer, device, weight=None, embed_dim=None):
     if not is_distributed:
         intervenable.set_device(device)
     else:
-        # For distributed models, move intervention parameters to the input device
-        # Get the device of the embedding layer (where inputs are sent)
+        # For distributed models, move intervention parameters to the LAYER's device
+        # (not input device, since gather_neurons needs tensors on same device as layer output)
         try:
-            input_device = next(model.get_input_embeddings().parameters()).device
+            layer_device = get_layer_device(model, layer)
             for k, v in intervenable.interventions.items():
-                v.to(input_device)
-        except Exception:
-            pass  # If we can't determine input device, pyvene will handle it
+                v.to(layer_device)
+        except Exception as e:
+            # Fallback to input device
+            try:
+                input_device = next(model.get_input_embeddings().parameters()).device
+                for k, v in intervenable.interventions.items():
+                    v.to(input_device)
+            except Exception:
+                pass  # If we can't determine device, pyvene will handle it
     
     intervenable.disable_model_gradients()
     return intervenable
@@ -186,6 +211,73 @@ def compute_loss(outputs, labels):
     """Cross entropy loss for the predictions."""
     CE = torch.nn.CrossEntropyLoss()
     return CE(outputs, labels)
+
+
+def get_layer_device(model, layer):
+    """
+    Get the device where a specific layer is located.
+    This is crucial for multi-GPU models with device_map="auto".
+    
+    Args:
+        model: The language model
+        layer: Layer index
+        
+    Returns:
+        torch.device for the specified layer
+    """
+    # Check hf_device_map for layer location
+    if hasattr(model, 'hf_device_map') and model.hf_device_map:
+        device_map = model.hf_device_map
+        # Look for the layer in the device map
+        # Common patterns: "model.layers.X", "transformer.h.X", "gpt_neox.layers.X"
+        for key, dev in device_map.items():
+            # Match layer patterns like "model.layers.27" 
+            if f'.layers.{layer}' in key or f'.h.{layer}' in key:
+                if isinstance(dev, int):
+                    return torch.device(f"cuda:{dev}")
+                elif isinstance(dev, str):
+                    return torch.device(dev)
+        
+        # If not found directly, infer from surrounding layers
+        # Sort layers to find which device this layer should be on
+        layer_devices = {}
+        for key, dev in device_map.items():
+            import re
+            match = re.search(r'\.layers\.(\d+)|\.h\.(\d+)', key)
+            if match:
+                layer_idx = int(match.group(1) or match.group(2))
+                if isinstance(dev, int):
+                    layer_devices[layer_idx] = torch.device(f"cuda:{dev}")
+                elif isinstance(dev, str):
+                    layer_devices[layer_idx] = torch.device(dev)
+        
+        if layer_devices:
+            # Find the closest layer that we know about
+            known_layers = sorted(layer_devices.keys())
+            for known_layer in reversed(known_layers):
+                if layer >= known_layer:
+                    return layer_devices[known_layer]
+            # If layer is before all known layers, use the first one
+            return layer_devices[known_layers[0]]
+    
+    # Fallback: try to access the layer directly and get its device
+    try:
+        # Try common model structures
+        if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+            layer_module = model.model.layers[layer]
+        elif hasattr(model, 'transformer') and hasattr(model.transformer, 'h'):
+            layer_module = model.transformer.h[layer]
+        elif hasattr(model, 'gpt_neox') and hasattr(model.gpt_neox, 'layers'):
+            layer_module = model.gpt_neox.layers[layer]
+        else:
+            raise AttributeError("Unknown model structure")
+        
+        return next(layer_module.parameters()).device
+    except (IndexError, StopIteration, AttributeError):
+        pass
+    
+    # Ultimate fallback
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def get_model_input_device(model):
@@ -482,12 +574,16 @@ def find_candidate_alignments_boundless(
     tokenizer=None,
     sparsity_coef=0.01,
     epochs=5,
+    layer_suffix=None,  # For layer parallelism: add suffix to output files
 ):
     """
     Find candidate alignments using boundless DAS.
     
     Similar to the standard find_candidate_alignments but uses boundless DAS
     which learns per-feature masks instead of fixed-dimension subspaces.
+    
+    Args:
+        layer_suffix: Optional suffix for output files (e.g., "_L0-10" for layer parallelism)
     """
     import os
     import json
@@ -511,9 +607,10 @@ def find_candidate_alignments_boundless(
     embed_dim = getattr(model.config, 'hidden_size', getattr(model.config, 'n_embd', None))
     
     for layer in layers:
-        intervenable = config_boundless_das(model, layer, device, embed_dim=embed_dim)
-        
         for pos in poss:
+            # Create fresh intervenable for EACH (layer, pos) combination
+            # This ensures mask_weights start at 0 (sigmoid=0.5) for each position
+            intervenable = config_boundless_das(model, layer, device, embed_dim=embed_dim)
             current_iteration += 1
             print(f"\n[{current_iteration}/{total_iterations}] Processing Layer {layer}, Position {pos}")
             
@@ -555,7 +652,11 @@ def find_candidate_alignments_boundless(
             partial_weights = {f"L{k[0]}_P{k[1]}": v for k, v in weights.items()}
             partial_feature_counts = {f"L{k[0]}_P{k[1]}": v for k, v in feature_counts.items()}
             
+            # Build suffix with intervention name and layer range
             suffix = f"_{intervention_name}" if intervention_name else ""
+            if layer_suffix:
+                suffix += layer_suffix
+            
             with open(f"results/candidates_boundless_partial{suffix}.json", "w") as f:
                 json.dump(partial_candidates, f, indent=4)
             with open(f"results/feature_counts_partial{suffix}.json", "w") as f:

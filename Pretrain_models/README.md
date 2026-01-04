@@ -9,6 +9,7 @@ The codebase implements:
 - **Boundless DAS**: Automatically selects relevant feature dimensions via learnable masks
 - **Vanilla Intervention**: Full activation patching without subspace projection
 - **Logic Task Evaluation**: Test LLM reasoning on boolean logic expressions
+- **Parallel Layer Training**: Train different layers on different GPUs simultaneously
 
 ## Files
 
@@ -19,6 +20,8 @@ The codebase implements:
 | `test_logic_task.py` | Standalone script to evaluate LLM accuracy on logic tasks |
 | `util_data.py` | Dataset generation, causal model construction, and counterfactual sampling |
 | `util_model.py` | Model loading utilities with multi-GPU support |
+| `run_parallel_boundless.sh` | Script to launch parallel training across multiple GPUs |
+| `merge_parallel_results.py` | Merge results from parallel training runs |
 
 ## Installation
 
@@ -96,7 +99,54 @@ python das.py --train --intervention-type vanilla \
     --batch-size 8
 ```
 
-### 3. Test Pre-trained Interventions
+### 3. Parallel Training (Multi-GPU Layer Parallelism)
+
+Since different layers are independent, you can train them in parallel on different GPUs for **6x speedup**:
+
+#### Option A: Use the provided script
+```bash
+# Launch parallel training (each GPU handles ~7 layers)
+./run_parallel_boundless.sh
+
+# Monitor progress
+tail -f logs/gpu_*.log
+
+# After all complete, merge results
+python merge_parallel_results.py --intervention op1
+```
+
+#### Option B: Manual parallel launch
+```bash
+# GPU 0: layers 0-9
+python das.py --train --intervention-type boundless \
+    --gpu-id 0 --layer-start 0 --layer-end 10 \
+    --hf-cache-dir /path/to/.hf_cache --batch-size 128
+
+# GPU 1: layers 10-19 (run in another terminal)
+python das.py --train --intervention-type boundless \
+    --gpu-id 1 --layer-start 10 --layer-end 20 \
+    --hf-cache-dir /path/to/.hf_cache --batch-size 128
+
+# ... continue for other GPUs
+```
+
+#### Option C: Slurm job array
+```bash
+for gpu in 0 1 2 3 4 5; do
+  layer_start=$((gpu * 7))
+  layer_end=$(((gpu + 1) * 7))
+  if [ $layer_end -gt 40 ]; then layer_end=40; fi
+  
+  nlprun -g 1 -a nlp -p sphinx \
+    "cd /path/to/Pretrain_models && \
+     source ~/.bashrc && conda activate multi-hyp && \
+     python das.py --train --intervention-type boundless \
+       --gpu-id $gpu --layer-start $layer_start --layer-end $layer_end \
+       --hf-cache-dir /path/to/.hf_cache --batch-size 128"
+done
+```
+
+### 4. Test Pre-trained Interventions
 
 ```bash
 # Test with saved weights
@@ -127,6 +177,9 @@ python das.py --test --intervention-type boundless \
 | `--batch-size` | `32` | Batch size |
 | `--data-size` | `1024` | Number of examples per dataset |
 | `--num-gpus` | `1` | Number of GPUs (-1 for auto, 0 for CPU) |
+| `--gpu-id` | None | Specific GPU ID for layer parallelism |
+| `--layer-start` | None | Start layer index (inclusive) for parallel training |
+| `--layer-end` | None | End layer index (exclusive) for parallel training |
 | `--seed` | `42` | Random seed |
 | `--hf-cache-dir` | None | HuggingFace cache directory |
 
@@ -141,6 +194,15 @@ python das.py --test --intervention-type boundless \
 | `--seed` | `42` | Random seed |
 | `--local-model-dir` | None | Local model cache directory |
 
+### merge_parallel_results.py
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--intervention` | `op1` | Intervention name to merge |
+| `--all-interventions` | False | Merge all interventions (op1-op5) |
+| `--results-dir` | `results` | Directory containing partial results |
+| `--output-suffix` | `_merged` | Suffix for merged output files |
+
 ## Output Files
 
 ### Training
@@ -148,6 +210,17 @@ python das.py --test --intervention-type boundless \
 - `training_results/das_weights_{type}_{model}_dim{d}.pt` - Trained intervention weights
 - `training_results/feature_counts_boundless_{model}.json` - Selected feature counts (boundless only)
 - `training_results/position_token_mapping_{op}_{model}.json` - Token position mappings
+
+### Parallel Training (Boundless DAS)
+- `results/candidates_boundless_partial_{op}_L{start}-{end}.json` - Partial results per GPU
+- `results/weights_boundless_partial_{op}_L{start}-{end}.pt` - Partial weights per GPU
+- `results/feature_counts_partial_{op}_L{start}-{end}.json` - Partial feature counts per GPU
+- `logs/gpu_{id}_L{start}-{end}.log` - Training logs per GPU
+
+### After Merging Parallel Results
+- `results/candidates_boundless_{op}_merged.json` - Merged accuracy scores
+- `results/weights_boundless_{op}_merged.pt` - Merged weights
+- `results/feature_counts_{op}_merged.json` - Merged feature counts
 
 ### Testing
 - `test_results/test_results_{type}_{model}.json` - Test accuracy per candidate
@@ -180,6 +253,8 @@ Task: `((t2 != t4) or (t1 == t3)) and ((t0 != t5) or (t1 == t3))`
 3. **Reproducibility**: Set `--seed` for consistent results
 4. **Boundless DAS**: Tune `--sparsity-coef` (higher = sparser feature selection)
 5. **Cache**: Use `--hf-cache-dir` to avoid re-downloading models
+6. **Parallel Training**: Use `--gpu-id`, `--layer-start`, `--layer-end` to train different layers on different GPUs simultaneously (6x speedup with 6 GPUs)
+7. **Layer Independence**: Different layers are completely independent during DAS training, making layer parallelism perfectly efficient
 
 ## References
 

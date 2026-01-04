@@ -687,6 +687,10 @@ if __name__ == "__main__":
     parser.add_argument("--sparsity-coef", type=float, default=0.01, help="Sparsity coefficient for boundless DAS L1 regularization")
     parser.add_argument("--temperature-start", type=float, default=1.0, help="Starting temperature for boundless DAS mask annealing")
     parser.add_argument("--temperature-end", type=float, default=0.01, help="Ending temperature for boundless DAS mask annealing")
+    parser.add_argument("--layer-start", type=int, default=None, help="Starting layer index (inclusive) for parallel layer search")
+    parser.add_argument("--layer-end", type=int, default=None, help="Ending layer index (exclusive) for parallel layer search")
+    parser.add_argument("--pos-start", type=int, default=None, help="Starting position index (inclusive) for intervention search (overrides auto-detection)")
+    parser.add_argument("--pos-end", type=int, default=None, help="Ending position index (exclusive) for intervention search (overrides auto-detection)")
     args = parser.parse_args()
 
     # Set random seed early for reproducibility
@@ -734,7 +738,19 @@ if __name__ == "__main__":
     num_layers = getattr(model.config, 'num_hidden_layers', getattr(model.config, 'n_layer', None))
     if num_layers is None:
         raise ValueError("Could not determine number of layers from model config")
-    layers = range(num_layers)  # from last layer to first layer (excluding embedding layer 0)
+    
+    # Apply layer filtering if specified
+    layer_start = args.layer_start if args.layer_start is not None else 0
+    layer_end = args.layer_end if args.layer_end is not None else num_layers
+    layers = range(layer_start, layer_end)
+    
+    # Build layer suffix for output file naming (for parallel runs)
+    if args.layer_start is not None or args.layer_end is not None:
+        layer_suffix = f"_L{layer_start}-{layer_end}"
+        print(f"Processing layers {layer_start} to {layer_end-1} (total: {len(layers)} layers)")
+    else:
+        layer_suffix = None
+        print(f"Processing all {num_layers} layers")
 
     if args.causal_model == "1":
         op_list = ["op1", "op2", "op3", "op4", "op5"]
@@ -788,7 +804,14 @@ if __name__ == "__main__":
             )
             if pos_after_sub_token != pos_after_sub_token2:
                 raise RuntimeError("The position after sub_token is not consistent across samples.")
-            poss = range(pos_after_sub_token+7, input_length)
+            
+            # Use user-specified position range if provided, otherwise auto-detect
+            if args.pos_start is not None and args.pos_end is not None:
+                poss = range(args.pos_start, args.pos_end)
+                print(f"Using user-specified position range: {args.pos_start} to {args.pos_end-1}")
+            else:
+                poss = range(pos_after_sub_token+7, input_length)
+                print(f"Auto-detected position range: {pos_after_sub_token+7} to {input_length-1}")
             
             # Save the position-to-token mapping to a separate file
             os.makedirs("training_results", exist_ok=True)
@@ -796,7 +819,7 @@ if __name__ == "__main__":
             with open(token_mapping_file, "w") as f:
                 json.dump(token_mapping, f, indent=4)
             print(f"Position-to-token mapping saved to {token_mapping_file}")
-            print(f"Searching positions from {pos_after_sub_token+7} to {input_length-1} for intervention {intervention}")
+            print(f"Searching positions from {poss.start} to {poss.stop-1} for intervention {intervention}")
 
             print(f"Dataset created for {intervention}")
             print(f"Finding candidates for {intervention}")
@@ -815,6 +838,7 @@ if __name__ == "__main__":
                     tokenizer=tokenizer,
                     sparsity_coef=args.sparsity_coef,
                     epochs=5,
+                    layer_suffix=layer_suffix,
                 )
                 candidates_total[intervention].update(candidate)
                 das_weights[intervention].update(weight)
@@ -844,7 +868,7 @@ if __name__ == "__main__":
             with open(f"training_results/candidates_boundless_{causal_model_tag}_pretrain.json", "w") as f:
                 json.dump(candidates_total, f, indent=4)
             print(f"Candidate alignments saved to training_results/candidates_boundless_{causal_model_tag}_pretrain.json")
-            
+
             with open(f"training_results/das_weights_boundless_{causal_model_tag}_pretrain.pt", "wb") as f:
                 torch.save(das_weights, f)
             print(f"Boundless DAS weights saved to training_results/das_weights_boundless_{causal_model_tag}_pretrain.pt")
