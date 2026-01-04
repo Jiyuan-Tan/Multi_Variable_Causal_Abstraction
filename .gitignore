@@ -1,0 +1,4 @@
+# Ignore output and hypothesis_testing folders (too large)
+Entity_Binding/hypothesis_testing/hypothesis_testing
+Entity_Binding/hypothesis_testing/outputs
+

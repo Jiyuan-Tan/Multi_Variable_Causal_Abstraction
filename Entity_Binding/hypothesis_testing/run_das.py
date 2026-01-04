@@ -123,6 +123,9 @@ def create_dataset_with_n_groups(config: EntityBindingTaskConfig, num_groups: in
     """
     Create a dataset with exactly num_groups active groups.
     
+    Both the input and counterfactual input are randomly generated independently
+    to maximize diversity in the training set.
+    
     Args:
         config: Task configuration
         num_groups: Number of active groups to use
@@ -132,7 +135,6 @@ def create_dataset_with_n_groups(config: EntityBindingTaskConfig, num_groups: in
         CounterfactualDataset with the specified number of groups
     """
     from causalab.tasks.entity_binding.causal_models import create_direct_causal_model
-    import random
     
     def generator():
         # Sample input and ensure it has exactly num_groups
@@ -153,41 +155,24 @@ def create_dataset_with_n_groups(config: EntityBindingTaskConfig, num_groups: in
         model = create_direct_causal_model(config)
         model.new_raw_input(input_sample)
         
-        # Create counterfactual by swapping with another group (same logic as swap_query_group)
-        active_groups = input_sample["active_groups"]
-        query_group = input_sample["query_group"]
-        
-        # Choose a different group to swap with
-        other_groups = [g for g in range(active_groups) if g != query_group]
-        if not other_groups or len(other_groups) == 0:
-            # Only one group, create a new sample with same number of groups
+        # Randomly generate counterfactual input independently (not by swapping)
+        # This ensures maximum diversity in the training set
+        for attempt in range(max_attempts):
             counterfactual_input = sample_valid_entity_binding_input(config, ensure_positional_uniqueness=True)
+            if counterfactual_input["active_groups"] == num_groups:
+                break
+        else:
+            # Force active_groups if we couldn't get it naturally
             counterfactual_input["active_groups"] = num_groups
+            # Ensure query_group is valid
             query_group_cf = counterfactual_input.get("query_group", 0)
             if query_group_cf >= num_groups:
                 counterfactual_input["query_group"] = query_group_cf % num_groups
-            model.new_raw_input(counterfactual_input)
-            return {"input": input_sample, "counterfactual_inputs": [counterfactual_input]}
         
-        swap_group = random.choice(other_groups)
+        # Regenerate raw_input for counterfactual with correct active_groups
+        model.new_raw_input(counterfactual_input)
         
-        # Create counterfactual by swapping entity groups
-        counterfactual = input_sample.copy()
-        entities_per_group = input_sample["entities_per_group"]
-        for e in range(entities_per_group):
-            key_query = f"entity_g{query_group}_e{e}"
-            key_swap = f"entity_g{swap_group}_e{e}"
-            counterfactual[key_query] = input_sample[key_swap]
-            counterfactual[key_swap] = input_sample[key_query]
-        
-        # Update query_group to follow where the original query entity moved
-        counterfactual["query_group"] = swap_group
-        if "raw_input" in counterfactual:
-            del counterfactual["raw_input"]
-        
-        model.new_raw_input(counterfactual)
-        
-        return {"input": input_sample, "counterfactual_inputs": [counterfactual]}
+        return {"input": input_sample, "counterfactual_inputs": [counterfactual_input]}
     
     return CounterfactualDataset.from_sampler(size, generator, id=f"entity_binding_{num_groups}groups")
 
@@ -320,6 +305,12 @@ def main():
         action="store_true",
         help="Test mode: reduced dataset size and batch size",
     )
+    parser.add_argument(
+        "--layers",
+        type=str,
+        default=None,
+        help="Comma-separated list of layer numbers to test (e.g., '0,5,10' or '0-5'). If not specified, all layers are tested.",
+    )
     
     args = parser.parse_args()
     
@@ -329,10 +320,30 @@ def main():
         args.batch_size = 8
         print("\n*** TEST MODE: size=16, batch_size=8 ***\n")
     
+    # Parse layers argument
+    selected_layers = None
+    if args.layers:
+        try:
+            selected_layers = []
+            for part in args.layers.split(','):
+                part = part.strip()
+                if '-' in part:
+                    # Range like "0-5"
+                    start, end = map(int, part.split('-'))
+                    selected_layers.extend(range(start, end + 1))
+                else:
+                    # Single layer number
+                    selected_layers.append(int(part))
+            selected_layers = sorted(set(selected_layers))  # Remove duplicates and sort
+        except ValueError as e:
+            print(f"Error parsing --layers argument: {e}")
+            print("Expected format: comma-separated list (e.g., '0,5,10') or range (e.g., '0-5')")
+            return 1
+    
     # Auto-generate output path
     if args.output is None:
         test_suffix = "_test" if args.test else ""
-        args.output = f"hypothesis_testing/outputs/{args.model.replace('/', '_')}{test_suffix}"
+        args.output = f"outputs/{args.model.replace('/', '_')}{test_suffix}"
     
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -356,6 +367,8 @@ def main():
     print(f"  Entities per group: 3")
     print(f"  Output directory: {output_dir}")
     print(f"  Test mode: {args.test}")
+    if selected_layers is not None:
+        print(f"  Selected layers: {selected_layers}")
     print()
     
     # Step 1: Create task configuration
@@ -515,8 +528,20 @@ def main():
     )
     token_positions = [token_position]
     
-    # Build residual stream targets for all layers
-    layers = list(range(num_layers))
+    # Build residual stream targets for all layers (or selected layers)
+    if selected_layers is not None:
+        # Validate selected layers are within valid range
+        invalid_layers = [l for l in selected_layers if l < 0 or l >= num_layers]
+        if invalid_layers:
+            print(f"Error: Invalid layer numbers: {invalid_layers}")
+            print(f"Valid layer range: 0-{num_layers-1}")
+            return 1
+        layers = selected_layers
+        print(f"  Testing selected layers: {layers}")
+    else:
+        layers = list(range(num_layers))
+        print(f"  Testing all layers: {layers}")
+    
     residual_targets = build_residual_stream_targets(
         pipeline=pipeline,
         layers=layers,
