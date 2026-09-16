@@ -1,0 +1,60 @@
+{
+  "alignment": "das_best (layer 14, k 2048), factual recall / RAVEL, target attribute language",
+  "graph": "experiments/factual_recall/artifacts/test_results_dasbest/graph.pkl",
+  "metric": "directed IIA = correct ordered pairs / n(n-1)",
+  "n_graph_nodes": 200,
+  "checkpoint_used": "/soalnas/share/data/jiyuantan/Multi_Variable_Causal_Abstraction/experiments/factual_recall/artifacts/das_best.pt",
+  "featurizer_sha256": {
+    "featurizer_featurizer": "f0848ef40432ad4ce5b2bc6ae8703330d07eede596be42b1101f81464a9b4441",
+    "featurizer_inverse_featurizer": "7145b1ed06214ed411c45a9c1fed1187b4452897d65bd6cc698368f76f84c57c"
+  },
+  "partition": {
+    "K": 3,
+    "gamma": 0.98,
+    "method": "greedy quasi-clique",
+    "source_graph": "test_results/graph.pkl (the paper's undirected graph)"
+  },
+  "checks": {
+    "partition_38_23_139_with_english": true,
+    "directed_iia_within_published_bounds": true,
+    "and_transpose_disagreeing_entries": 0
+  },
+  "results": [
+    {
+      "name": "OVERALL",
+      "n": 200,
+      "u_density": 0.1043,
+      "directed_iia": 0.2337,
+      "lo": 0.1043,
+      "hi": 0.5522,
+      "within_bounds": true
+    },
+    {
+      "name": "bucket 2 (Portuguese)",
+      "n": 139,
+      "u_density": 0.0684,
+      "directed_iia": 0.2068,
+      "lo": 0.0684,
+      "hi": 0.5342,
+      "within_bounds": true
+    },
+    {
+      "name": "bucket 0 (English)",
+      "n": 38,
+      "u_density": 0.9815,
+      "directed_iia": 0.9908,
+      "lo": 0.9815,
+      "hi": 0.9908,
+      "within_bounds": true
+    },
+    {
+      "name": "bucket 1 (Spanish)",
+      "n": 23,
+      "u_density": 0.9881,
+      "directed_iia": 0.9941,
+      "lo": 0.9881,
+      "hi": 0.9941,
+      "within_bounds": true
+    }
+  ]
+}

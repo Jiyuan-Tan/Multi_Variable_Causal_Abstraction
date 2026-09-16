@@ -484,6 +484,16 @@ def compute_per_example_scores_ravel(
     return scores
 
 
+def _sha256_file(path, chunk=1 << 22) -> str:
+    """sha256 of a file, for recording which weights a run actually used."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def build_directed_adjacency_from_scores(
     scores: List[float],
     pair_indices: List[Tuple[int, int, str]],
@@ -515,10 +525,17 @@ def build_graph_das(
 ) -> np.ndarray:
     """Build DIRECTED adjacency matrix from interchange intervention consistency.
     Edge i->j exists iff when i is source and j is base, the prediction is correct.
-    Undirected graph can be recovered as (adj & adj.T) - edge exists iff both directions correct."""
+    Undirected graph can be recovered as (adj & adj.T) - edge exists iff both directions correct.
+
+    Returns (adj_matrix, scores, pair_indices). The per-ordered-pair `scores` are
+    returned rather than discarded at aggregation: they are the raw measurement,
+    and keeping them means any later definition (directed IIA, undirected density,
+    per-bucket or per-attribute breakdowns, confidence intervals) can be recomputed
+    offline without a GPU. The original graph build threw them away, which is the
+    only reason reproducing it needs the model again."""
     n = len(samples)
     if n <= 1:
-        return np.zeros((n, n), dtype=bool)
+        return np.zeros((n, n), dtype=bool), [], []
 
     # Pairs (i,j) and (j,i) for all i < j: (base, source) order
     pairs_ordered: List[Tuple[dict, dict]] = []
@@ -555,7 +572,7 @@ def build_graph_das(
     raw_results = {key: {"string": all_strings}}
     scores = compute_per_example_scores_ravel(raw_results, cf_dataset, key)
     adj_matrix = build_directed_adjacency_from_scores(scores, pair_indices, n)
-    return adj_matrix
+    return adj_matrix, scores, pair_indices
 
 
 # ---------------------------------------------------------------------------
@@ -846,18 +863,52 @@ def run_train(args) -> None:
 
 def run_test(args) -> None:
     method = getattr(args, "training_method", "mdas")
-    ckpt_path = ARTIFACTS / f"das_{method}_best.pt"
+    # `das_best.pt` / `das_best_featurizer/` were written by the older code path,
+    # which had no --training_method, so they are not reachable from any value of
+    # it. --ckpt / --featurizer_dir address them explicitly rather than renaming
+    # the files, so the provenance of each alignment stays legible on disk.
+    override_ckpt = getattr(args, "ckpt", None)
+    ckpt_path = Path(override_ckpt) if override_ckpt else ARTIFACTS / f"das_{method}_best.pt"
     if not ckpt_path.exists():
         raise FileNotFoundError(
             f"{ckpt_path} not found — run --mode train --training_method {method} first."
+            if not override_ckpt else f"--ckpt {ckpt_path} does not exist."
         )
 
     ckpt      = torch.load(ckpt_path, map_location="cpu")
     layer_idx = ckpt["layer"]
     k         = ckpt["k"]
     d_model   = ckpt["d_model"]
-    feat_base = ckpt.get("featurizer_path",
-                          str(ARTIFACTS / f"das_{method}_best_featurizer" / "featurizer"))
+    # The checkpoint stores an ABSOLUTE featurizer_path from whichever machine
+    # trained the alignment, so it does not resolve on any other host. Prefer it
+    # when the modules are actually there, otherwise fall back to this repo's
+    # artifacts directory (Featurizer.load_modules reads <base>_featurizer and
+    # <base>_inverse_featurizer).
+    override_featdir = getattr(args, "featurizer_dir", None)
+    local_feat_base = str(Path(override_featdir) / "featurizer") if override_featdir \
+        else str(ARTIFACTS / f"das_{method}_best_featurizer" / "featurizer")
+    # An explicit --featurizer_dir wins over the path baked into the checkpoint.
+    recorded_feat_base = None if override_featdir else ckpt.get("featurizer_path")
+
+    def _modules_present(base: str) -> bool:
+        return all(os.path.exists(f"{base}_{suffix}")
+                   for suffix in ("featurizer", "inverse_featurizer"))
+
+    if recorded_feat_base and _modules_present(str(recorded_feat_base)):
+        feat_base = str(recorded_feat_base)
+    else:
+        feat_base = local_feat_base
+        if recorded_feat_base and str(recorded_feat_base) != local_feat_base:
+            print(f"Checkpoint featurizer_path does not resolve here "
+                  f"({recorded_feat_base}); using {feat_base}")
+    if not _modules_present(feat_base):
+        raise FileNotFoundError(
+            f"MDAS featurizer modules not found at {feat_base}_featurizer / "
+            f"{feat_base}_inverse_featurizer. These weights are ~134 MB each and are "
+            "gitignored, so they are not in a fresh clone - copy them from the machine "
+            "that trained the alignment. Do NOT retrain: a new alignment would be a "
+            "different subspace and would not be comparable to the published numbers."
+        )
     print(f"Loaded checkpoint: layer={layer_idx}, k={k}, d_model={d_model}")
 
     pipeline = load_pipeline(max_new_tokens=6)
@@ -894,12 +945,12 @@ def run_test(args) -> None:
 
     # Build graph from interchange intervention consistency (do NOT partition)
     method = getattr(args, "training_method", "mdas")
-    test_results_dir = ARTIFACTS / f"test_results_{method}"
+    test_results_dir = ARTIFACTS / f"test_results_{getattr(args, 'run_tag', None) or method}"
     test_results_dir.mkdir(parents=True, exist_ok=True)
     graph_size = min(len(test_dataset), getattr(args, "test_graph_size", 50))
     samples_for_graph = test_dataset[:graph_size]
     print(f"Building graph on {len(samples_for_graph)} samples (test_graph_size={graph_size})...")
-    adj_matrix = build_graph_das(
+    adj_matrix, pair_scores, pair_indices = build_graph_das(
         pipeline=pipeline,
         target=target,
         key=key,
@@ -911,6 +962,18 @@ def run_test(args) -> None:
         pickle.dump(test_dataset, f)
     with open(test_results_dir / "graph.pkl", "wb") as f:
         pickle.dump(adj_matrix, f)
+    # Persist the RAW per-ordered-pair outcomes, not just the aggregated adjacency.
+    # This is what lets any future metric be recomputed without a GPU.
+    np.savez_compressed(
+        test_results_dir / "pair_scores.npz",
+        scores=np.asarray(pair_scores, dtype=np.uint8),
+        pair_i=np.asarray([p[0] for p in pair_indices], dtype=np.int32),
+        pair_j=np.asarray([p[1] for p in pair_indices], dtype=np.int32),
+        direction=np.asarray([p[2] for p in pair_indices], dtype="U2"),
+        n_graph_nodes=np.asarray(len(samples_for_graph), dtype=np.int32),
+    )
+    print(f"Saved {len(pair_scores)} raw per-ordered-pair outcomes → "
+          f"{test_results_dir / 'pair_scores.npz'}")
     # Save metadata so we know graph corresponds to first graph_size samples of test_dataset
     with open(test_results_dir / "test_results_meta.json", "w") as f:
         json.dump({
@@ -920,7 +983,29 @@ def run_test(args) -> None:
             "graph_semantics": "edge i->j exists iff when i is source and j is base the prediction is correct; undirected = adj & adj.T",
             "n_test_dataset": len(test_dataset),
             "n_graph_nodes": len(samples_for_graph),
+            "graph_nodes": "test_dataset.pkl[:n_graph_nodes] - the graph covers the "
+                           "FIRST n_graph_nodes rows of test_dataset.pkl, in order; "
+                           "this slicing is what makes the partition reproducible",
             "test_data_path": str(test_data_path),
+            "pair_scores_file": "pair_scores.npz",
+            "pair_scores_semantics":
+                "Raw per-ordered-pair intervention outcomes, one entry per (i,j,direction). "
+                "direction 'ij' = (base i, source j) -> edge j->i; "
+                "direction 'ji' = (base j, source i) -> edge i->j. "
+                "scores[k]==1 iff that intervention's prediction was correct. "
+                "Both orderings are present for every i<j, so directed IIA, undirected "
+                "density and any per-bucket metric are all recomputable from this file "
+                "alone, with no model or GPU.",
+            "checkpoint_used": str(ckpt_path),
+            "featurizer_path_used": feat_base,
+            # sha256 of the actual weights: das_best / das_das_best / das_mdas_best
+            # have byte-identical file SIZES, so only the hash identifies which
+            # alignment produced this graph. Recording it makes a weights mix-up
+            # self-diagnosing from the artifact alone.
+            "featurizer_sha256": {
+                Path(f"{feat_base}_{suffix}").name: _sha256_file(f"{feat_base}_{suffix}")
+                for suffix in ("featurizer", "inverse_featurizer")
+            },
         }, f, indent=2)
     print(f"Saved test dataset and graph → {test_results_dir} (test_dataset.pkl, graph.pkl); partition not run.")
 
@@ -997,6 +1082,18 @@ def parse_args():
                    help="Path to test data JSONL (for test mode; default: step1_accuracy_processed)")
     p.add_argument("--gpu", type=int, default=0,
                    help="GPU index to use (default: 0)")
+    p.add_argument("--ckpt", type=str, default=None,
+                   help="Explicit checkpoint path, overriding das_{training_method}_best.pt. "
+                        "Needed for das_best.pt, which the older code path wrote without a "
+                        "method in its name and which is therefore otherwise unreachable.")
+    p.add_argument("--featurizer_dir", type=str, default=None,
+                   help="Directory holding featurizer_featurizer / featurizer_inverse_featurizer, "
+                        "overriding both the checkpoint's recorded featurizer_path and "
+                        "das_{training_method}_best_featurizer/.")
+    p.add_argument("--run_tag", type=str, default=None,
+                   help="Suffix for the output directory: test_results_{run_tag} instead of "
+                        "test_results_{training_method}. Keeps a rerun from overwriting an "
+                        "existing alignment's artifacts.")
     return p.parse_args()
 
 
