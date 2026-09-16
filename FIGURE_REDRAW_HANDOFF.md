@@ -108,8 +108,29 @@ Reason, verified three ways:
    — exactly symmetric, density 0.1043. Its `test_results_meta.json` has no `graph_type`
    field; it came from the older code path whose docstring reads "Undirected edge (i,j)
    only if both (i->j) and (j->i) are consistent" (`step2_das.py`, ~line 466).
-2. The paper's alignment is **MDAS**: Figure 5's per-attribute row matches
-   `das_mdas_test_iia_by_attribute_diff_gold.json` exactly (Language 0.1433 = the paper's 14.3%).
+2. ⚠️ **CORRECTED 2026-09-15 — the original claim here was half wrong.** This section first
+   said "the paper's alignment is MDAS", inferred from Figure 5's per-attribute row matching
+   `das_mdas_test_iia_by_attribute_diff_gold.json` exactly (Language 0.1433 = the paper's
+   14.3%). That inference still holds *for that row only*. But the **graph** — and therefore
+   the 38/23/139 buckets and their 0.98/0.99/0.07 values — was built from a **different
+   alignment**, `das_best`, not `das_mdas`. Evidence, independent of file timestamps: the
+   current code derives both names from the method (`ARTIFACTS / f"das_{method}_best.pt"` at
+   step2_das.py:856 and `test_results_{method}` at :897, method ∈ {mdas, das}), so it can
+   never emit bare `das_best.pt` or bare `test_results/`. Those two are artifacts of the same
+   older, pre-`--training_method` code path and belong together. Corroborating: that older
+   path's `test_results_meta.json` has no `training_method` and no `graph_type` field, and
+   `das_best_test_iia_by_attribute.json` used `n_pairs=512` where the current default is 300.
+   Checkpoint configs: `das_best.pt` layer 14, `das_das_best.pt` layer 9, `das_mdas_best.pt`
+   layer 14 — so `das_best` and `das_mdas` are the same architecture at the same layer from
+   different training runs, which is why a rerun with `das_mdas` reproduces the overall IIA
+   (0.1707 vs the recorded 0.17) while failing pair-level consistency.
+   **Consequence: Figure 5 currently combines two alignments** — its per-attribute bar row
+   from `das_mdas`, its bucket structure and values from `das_best`. Flagged to the authors;
+   unresolved as of this edit. Anyone converting RAVEL to directed IIA must use **`das_best`**,
+   since what is being converted is the graph.
+   **All three featurizer pairs have byte-identical sizes** (134,220,575 / 134,220,711); only
+   sha256 distinguishes them — `das_best` f0848ef4…/7145b1ed…, `das_das` 60ffcd54…/f8f836f9…,
+   `das_mdas` 19f134c1…/c5c58510…. Record the featurizer sha256 in every run's meta json.
 3. The only directed RAVEL graph is `test_results_das/graph.pkl` (`training_method: das`,
    `graph_type: directed`) — a **different alignment**: its `A & A.T` has density 0.2456 and
    disagrees with the paper's graph in 7,544 of 40,000 entries.
