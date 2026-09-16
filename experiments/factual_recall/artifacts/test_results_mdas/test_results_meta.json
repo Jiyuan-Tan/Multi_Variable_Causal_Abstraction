@@ -1,0 +1,13 @@
+{
+  "training_method": "mdas",
+  "target_attribute": "language",
+  "graph_type": "directed",
+  "graph_semantics": "edge i->j exists iff when i is source and j is base the prediction is correct; undirected = adj & adj.T",
+  "n_test_dataset": 445,
+  "n_graph_nodes": 200,
+  "graph_nodes": "test_dataset.pkl[:n_graph_nodes] - the graph covers the FIRST n_graph_nodes rows of test_dataset.pkl, in order; this slicing is what makes the partition reproducible",
+  "test_data_path": "/soalnas/share/data/jiyuantan/Multi_Variable_Causal_Abstraction/experiments/factual_recall/artifacts/step1_accuracy_processed.jsonl",
+  "pair_scores_file": "pair_scores.npz",
+  "pair_scores_semantics": "Raw per-ordered-pair intervention outcomes, one entry per (i,j,direction). direction 'ij' = (base i, source j) -> edge j->i; direction 'ji' = (base j, source i) -> edge i->j. scores[k]==1 iff that intervention's prediction was correct. Both orderings are present for every i<j, so directed IIA, undirected density and any per-bucket metric are all recomputable from this file alone, with no model or GPU.",
+  "featurizer_path_used": "/soalnas/share/data/jiyuantan/Multi_Variable_Causal_Abstraction/experiments/factual_recall/artifacts/das_mdas_best_featurizer/featurizer"
+}
